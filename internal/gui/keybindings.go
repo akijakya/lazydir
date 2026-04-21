@@ -144,10 +144,19 @@ func (app *Gui) inputCancel(g *gocui.Gui, v *gocui.View) error {
 
 var focusOrder = []string{viewDirectory, viewClasses, viewRecords, viewPreview}
 
+// focusTo sets the current view and updates highlight state on list panels.
+func (app *Gui) focusTo(g *gocui.Gui, name string) error {
+	_, err := g.SetCurrentView(name)
+	if err != nil {
+		return err
+	}
+	app.syncHighlight(g, name)
+	return nil
+}
+
 func (app *Gui) focusView(name string) func(*gocui.Gui, *gocui.View) error {
 	return func(g *gocui.Gui, v *gocui.View) error {
-		_, err := g.SetCurrentView(name)
-		return err
+		return app.focusTo(g, name)
 	}
 }
 
@@ -173,8 +182,7 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 		}
 	}
 	next := (idx + dir + len(focusOrder)) % len(focusOrder)
-	_, err := g.SetCurrentView(focusOrder[next])
-	return err
+	return app.focusTo(g, focusOrder[next])
 }
 
 // ── Classes panel handlers ────────────────────────────────────────────────────

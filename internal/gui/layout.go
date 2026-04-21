@@ -15,6 +15,12 @@ const (
 	viewInput     = "input" // shared editable prompt view, shown on demand
 )
 
+// roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
+var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
+
+// listViews are the panels that show a highlighted cursor row.
+var listViews = []string{viewClasses, viewRecords}
+
 // layout is the gocui Manager — called on every redraw/resize.
 func (g *Gui) layout(gui *gocui.Gui) error {
 	maxX, maxY := gui.Size()
@@ -37,6 +43,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Frame = true
 		v.Wrap = false
 		v.Highlight = false
+		v.FrameRunes = roundedFrame
 		g.renderDirectory(gui)
 	}
 
@@ -47,9 +54,10 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		}
 		v.Title = "[2] Classes"
 		v.Frame = true
-		v.Highlight = true
-		v.SelBgColor = gocui.ColorCyan
-		v.SelFgColor = gocui.ColorBlack
+		v.Highlight = false // toggled by syncHighlight
+		v.SelBgColor = gocui.Get256Color(8) // base16 color 8: bright black / dark grey
+		v.SelFgColor = gocui.ColorDefault
+		v.FrameRunes = roundedFrame
 	}
 
 	// [3] Records panel
@@ -59,9 +67,10 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		}
 		v.Title = "[3] Records"
 		v.Frame = true
-		v.Highlight = true
-		v.SelBgColor = gocui.ColorCyan
-		v.SelFgColor = gocui.ColorBlack
+		v.Highlight = false // toggled by syncHighlight
+		v.SelBgColor = gocui.Get256Color(8) // base16 color 8: bright black / dark grey
+		v.SelFgColor = gocui.ColorDefault
+		v.FrameRunes = roundedFrame
 	}
 
 	// Preview panel (right 2/3)
@@ -72,17 +81,18 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Title = "Preview"
 		v.Frame = true
 		v.Wrap = true
+		v.FrameRunes = roundedFrame
 	}
 
-	// Status bar
-	if _, err := gui.SetView(viewStatus, 0, statusY, maxX-1, maxY-1, 0); err != nil {
+	// Status bar — no frame, no rounding
+	if v, err := gui.SetView(viewStatus, 0, statusY, maxX-1, maxY-1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
+		v.Frame = false
 	}
 
 	// Shared input prompt — always exists, shown/hidden on demand.
-	// Positioned at the bottom of the directory panel area.
 	inputY0 := dirH - 3
 	inputY1 := dirH - 1
 	if v, err := gui.SetView(viewInput, 1, inputY0, leftW-2, inputY1, 0); err != nil {
@@ -93,6 +103,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.KeybindOnEdit = true
 		v.Wrap = false
 		v.Frame = true
+		v.FrameRunes = roundedFrame
 		v.Visible = false
 	}
 
@@ -103,9 +114,22 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if _, err := gui.SetCurrentView(viewRecords); err != nil {
 			return err
 		}
+		g.syncHighlight(gui, viewRecords)
 	}
 
 	return nil
+}
+
+// syncHighlight enables the row-highlight cursor on the focused list view only,
+// and disables it on all others — giving a clear visual focus cue.
+func (g *Gui) syncHighlight(gui *gocui.Gui, focused string) {
+	for _, name := range listViews {
+		v, err := gui.View(name)
+		if err != nil {
+			continue
+		}
+		v.Highlight = (name == focused)
+	}
 }
 
 func (g *Gui) renderStatus(gui *gocui.Gui) {

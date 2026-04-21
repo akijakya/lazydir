@@ -285,12 +285,12 @@ func (app *Gui) closeInput() {
 	iv.Visible = false
 	app.state.inputVisible = false
 
-	if app.state.prevView != "" {
-		_, _ = app.g.SetCurrentView(app.state.prevView)
-		app.state.prevView = ""
-	} else {
-		_, _ = app.g.SetCurrentView(viewRecords)
+	target := app.state.prevView
+	if target == "" {
+		target = viewRecords
 	}
+	app.state.prevView = ""
+	_ = app.focusTo(app.g, target)
 }
 
 // currentClassItems returns the items for the active taxonomy tab.

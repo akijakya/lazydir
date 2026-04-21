@@ -12,6 +12,25 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
+// lazydirStyle is a chroma style derived from "tango" with punctuation
+// remapped to plain white so that { } [ ] ( ) , : ; are readable on dark
+// terminals instead of the default bold-black that tango uses.
+var lazydirStyle = func() *chroma.Style {
+	base := styles.Get("tango")
+	if base == nil {
+		base = styles.Fallback
+	}
+	b := base.Builder()
+	// "bold" alone inherits the token's foreground but ensures it is bright;
+	// "#ffffff bold" forces bright white — readable on any dark background.
+	b.Add(chroma.Punctuation, "#ffffff bold")
+	s, err := b.Build()
+	if err != nil {
+		return base
+	}
+	return s
+}()
+
 // renderClassesView redraws the [2] Classes panel.
 func (app *Gui) renderClassesView(g *gocui.Gui) {
 	v, err := g.View(viewClasses)
@@ -133,7 +152,8 @@ func (app *Gui) renderPreviewJSON(g *gocui.Gui, title, jsonStr string) {
 }
 
 
-// highlightJSON returns ANSI-colored JSON using chroma.
+// highlightJSON returns ANSI-colored JSON using chroma with the terminal's
+// own color palette so the output blends with the user's theme.
 func highlightJSON(src string) string {
 	lexer := lexers.Get("json")
 	if lexer == nil {
@@ -141,12 +161,7 @@ func highlightJSON(src string) string {
 	}
 	lexer = chroma.Coalesce(lexer)
 
-	style := styles.Get("monokai")
-	if style == nil {
-		style = styles.Fallback
-	}
-
-	formatter := formatters.Get("terminal256")
+	formatter := formatters.Get("terminal16")
 	if formatter == nil {
 		formatter = formatters.Fallback
 	}
@@ -157,7 +172,7 @@ func highlightJSON(src string) string {
 	}
 
 	var buf bytes.Buffer
-	if err := formatter.Format(&buf, style, iter); err != nil {
+	if err := formatter.Format(&buf, lazydirStyle, iter); err != nil {
 		return src
 	}
 
