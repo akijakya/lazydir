@@ -1,0 +1,41 @@
+version: "3"
+
+vars:
+  BIN_DIR: .bin
+  BINARY: "{{.BIN_DIR}}/lazydir"
+  MODULE:
+    sh: go list -m
+
+tasks:
+  deps:
+    desc: Download Go module dependencies
+    cmds:
+      - go mod download
+    sources:
+      - go.mod
+      - go.sum
+
+  build:
+    desc: Build the lazydir binary into .bin/
+    deps: [deps]
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -o {{.BINARY}} .
+    sources:
+      - "**/*.go"
+      - go.mod
+      - go.sum
+    generates:
+      - "{{.BINARY}}"
+
+  run:
+    desc: Build and start lazydir for testing (pass extra args via CLI_ARGS)
+    deps: [build]
+    cmds:
+      - "{{.BINARY}} {{.CLI_ARGS}}"
+
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+    silent: true
