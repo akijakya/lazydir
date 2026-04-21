@@ -78,10 +78,11 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "Preview"
+		v.Title = "[0] Preview"
 		v.Frame = true
 		v.Wrap = true
 		v.FrameRunes = roundedFrame
+		v.CanScrollPastBottom = true
 	}
 
 	// Status bar — no frame, no rounding

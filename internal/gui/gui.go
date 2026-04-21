@@ -102,7 +102,7 @@ func New(cfg dirclient.Config) error {
 	app.g = g
 	g.Highlight = true
 	g.SelFgColor = gocui.ColorGreen
-	g.Mouse = false
+	g.Mouse = true
 
 	g.SetManagerFunc(app.layout)
 
@@ -181,6 +181,7 @@ func (app *Gui) loadRecords(c *dirclient.Client) {
 		app.renderClassesView(g)
 		app.renderRecordsView(g)
 		app.setStatus(fmt.Sprintf("Loaded %d records.", len(summaries)))
+		app.autoPreviewRecord(g)
 		return nil
 	})
 }

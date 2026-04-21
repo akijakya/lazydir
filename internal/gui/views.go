@@ -128,27 +128,36 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 }
 
 // renderPreviewText sets plain text content in the preview panel.
-func (app *Gui) renderPreviewText(g *gocui.Gui, title, content string) {
+func (app *Gui) renderPreviewText(g *gocui.Gui, subtitle, content string) {
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return
 	}
-	v.Title = title
+	v.Title = previewTitle(subtitle)
 	v.Clear()
 	_ = v.SetOrigin(0, 0)
 	fmt.Fprint(v, content)
 }
 
 // renderPreviewJSON sets syntax-highlighted JSON in the preview panel.
-func (app *Gui) renderPreviewJSON(g *gocui.Gui, title, jsonStr string) {
+func (app *Gui) renderPreviewJSON(g *gocui.Gui, subtitle, jsonStr string) {
 	v, err := g.View(viewPreview)
 	if err != nil {
 		return
 	}
-	v.Title = title
+	v.Title = previewTitle(subtitle)
 	v.Clear()
 	_ = v.SetOrigin(0, 0)
 	fmt.Fprint(v, highlightJSON(jsonStr))
+}
+
+// previewTitle formats the preview panel title, always keeping the [0] Preview
+// prefix and appending the current item name when one is provided.
+func previewTitle(subtitle string) string {
+	if subtitle == "" {
+		return "[0] Preview"
+	}
+	return "[0] Preview — " + subtitle
 }
 
 

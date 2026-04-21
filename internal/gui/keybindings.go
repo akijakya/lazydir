@@ -32,6 +32,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", '3', gocui.ModNone, app.focusView(viewRecords)); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding("", '0', gocui.ModNone, app.focusView(viewPreview)); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding("", 'r', gocui.ModNone, app.refresh); err != nil {
 		return err
 	}
@@ -108,6 +111,34 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
 		if err := g.SetKeybinding(viewPreview, key, gocui.ModNone, app.previewScrollDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewPreview, gocui.MouseWheelUp, gocui.ModNone, app.previewScrollUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewPreview, gocui.MouseWheelDown, gocui.ModNone, app.previewScrollDown); err != nil {
+		return err
+	}
+
+	// Mouse wheel scrolling on list panels
+	if err := g.SetKeybinding(viewClasses, gocui.MouseWheelUp, gocui.ModNone, app.classCursorUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewClasses, gocui.MouseWheelDown, gocui.ModNone, app.classCursorDown); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, gocui.MouseWheelUp, gocui.ModNone, app.recordCursorUp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, gocui.MouseWheelDown, gocui.ModNone, app.recordCursorDown); err != nil {
+		return err
+	}
+
+	// Mouse click focuses the clicked panel
+	for _, name := range []string{viewDirectory, viewClasses, viewRecords, viewPreview} {
+		n := name
+		if err := g.SetKeybinding(n, gocui.MouseLeft, gocui.ModNone, app.focusView(n)); err != nil {
 			return err
 		}
 	}
@@ -191,6 +222,7 @@ func (app *Gui) classCursorUp(g *gocui.Gui, v *gocui.View) error {
 	if app.state.classCursor > 0 {
 		app.state.classCursor--
 		app.renderClassesView(g)
+		app.autoPreviewClass(g)
 	}
 	return nil
 }
@@ -200,6 +232,7 @@ func (app *Gui) classCursorDown(g *gocui.Gui, v *gocui.View) error {
 	if app.state.classCursor < len(items) {
 		app.state.classCursor++
 		app.renderClassesView(g)
+		app.autoPreviewClass(g)
 	}
 	return nil
 }
@@ -261,6 +294,7 @@ func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
 	if app.state.recordCursor > 0 {
 		app.state.recordCursor--
 		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
 	}
 	return nil
 }
@@ -269,6 +303,7 @@ func (app *Gui) recordCursorDown(g *gocui.Gui, v *gocui.View) error {
 	if app.state.recordCursor < len(app.state.filteredRecords)-1 {
 		app.state.recordCursor++
 		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
 	}
 	return nil
 }
@@ -399,12 +434,11 @@ func (app *Gui) fetchOASF(ct oasf.ClassType, name string) {
 	info, err := oasf.Fetch(ct, name)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
-			app.renderPreviewText(g, "OASF Error", err.Error())
+			app.renderPreviewText(g, "Error", err.Error())
 			app.setStatus("OASF fetch failed: " + err.Error())
 			return nil
 		}
-		title := fmt.Sprintf("[%s] %s", info.Type, info.Name)
-		app.renderPreviewText(g, title, info.Description)
+		app.renderPreviewText(g, fmt.Sprintf("%s %s", info.Type, info.Name), info.Description)
 		app.setStatus("Showing OASF description for " + name)
 		return nil
 	})
@@ -415,4 +449,46 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// autoPreviewRecord fires a background pull for the record currently under the
+// cursor, resetting the preview scroll position first.
+func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
+	records := app.state.filteredRecords
+	if app.state.recordCursor >= len(records) {
+		return
+	}
+	cid := records[app.state.recordCursor].CID
+	if cid == "" {
+		return
+	}
+	if pv, err := g.View(viewPreview); err == nil {
+		_ = pv.SetOrigin(0, 0)
+	}
+	go app.pullRecord(cid)
+}
+
+// autoPreviewClass shows the OASF description for the class currently under
+// the cursor, or clears the preview when "(All)" is selected.
+func (app *Gui) autoPreviewClass(g *gocui.Gui) {
+	items := app.currentClassItems()
+	cursor := app.state.classCursor
+	if cursor == 0 || cursor-1 >= len(items) {
+		app.renderPreviewText(g, "", "")
+		return
+	}
+	name := items[cursor-1]
+	var ct oasf.ClassType
+	switch app.state.activeTab {
+	case tabSkills:
+		ct = oasf.ClassTypeSkill
+	case tabDomains:
+		ct = oasf.ClassTypeDomain
+	case tabModules:
+		ct = oasf.ClassTypeModule
+	}
+	if pv, err := g.View(viewPreview); err == nil {
+		_ = pv.SetOrigin(0, 0)
+	}
+	go app.fetchOASF(ct, name)
 }
