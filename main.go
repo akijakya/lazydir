@@ -4,27 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/akijakya/lazydir/internal/app"
 	"github.com/akijakya/lazydir/internal/dirclient"
+	"github.com/akijakya/lazydir/internal/gui"
 )
 
 func main() {
 	cfg := parseFlags()
 
-	if len(os.Getenv("DEBUG")) > 0 {
-		f, err := tea.LogToFile("lazydir_debug.log", "debug")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "could not open debug log:", err)
-			os.Exit(1)
-		}
-		defer f.Close()
-	}
-
-	m := app.New(cfg)
-	p := tea.NewProgram(m)
-
-	if _, err := p.Run(); err != nil {
+	if err := gui.New(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -33,6 +20,11 @@ func main() {
 func parseFlags() dirclient.Config {
 	cfg := dirclient.Config{
 		ServerAddress: "localhost:8888",
+	}
+
+	// Also honour the environment variable used by dirctl.
+	if addr := os.Getenv("DIRECTORY_CLIENT_SERVER_ADDRESS"); addr != "" {
+		cfg.ServerAddress = addr
 	}
 
 	args := os.Args[1:]
@@ -80,11 +72,6 @@ func parseFlags() dirclient.Config {
 		}
 	}
 
-	// Also check environment variable for server address.
-	if addr := os.Getenv("DIRECTORY_CLIENT_SERVER_ADDRESS"); addr != "" && cfg.ServerAddress == "localhost:8888" {
-		cfg.ServerAddress = addr
-	}
-
 	return cfg
 }
 
@@ -106,7 +93,6 @@ Flags:
 
 Environment:
   DIRECTORY_CLIENT_SERVER_ADDRESS  Default server address
-  DEBUG                            Set to any value to enable debug logging
 
 Key Bindings (inside the TUI):
   tab / shift+tab    Cycle panel focus
@@ -115,7 +101,8 @@ Key Bindings (inside the TUI):
   enter              Select item
   /                  Filter records by name
   esc                Clear filter / dismiss dialog
-  c                  Open connect dialog
+  h / l              Switch Classes tab (Skills / Domains / Modules)
+  c                  Open connect dialog (Directory panel)
   r                  Refresh records
   q / ctrl+c         Quit
 `)
