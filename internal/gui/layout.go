@@ -46,16 +46,88 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	}
 	optionsX1 := maxX - infoW - 2
 
-	dirH := 5
-	classH := (panelBottom - dirH) / 2
-	recY0 := dirH + classH
+	// [1] Connections shows two lines (Directory, OASF) plus an optional
+	// auth-mode line. Height = frame(2) + content lines.
+	dirH := 4
+	if g.state.authMode != "" {
+		dirH = 5
+	}
 
-	// [1] Directory panel
-	if v, err := gui.SetView(viewDirectory, 0, 0, leftW-1, dirH-1, 0); err != nil {
+	// The input prompt, when visible, steals a 3-row slot on the left column
+	// above the panel that requested it (the "host"). Panels below the host
+	// are all shifted down by inputSlot rows.
+	const inputSlot = 3
+	inputHost := g.inputHostView()
+	showInput := g.state.inputVisible
+
+	var (
+		dirY0, dirY1       = 0, dirH - 1
+		classY0, classY1   = dirH, 0
+		recordY0           = 0
+		inputOnLeft        = false
+		inputX0, inputY0   = 0, 0
+		inputX1, inputY1   = 0, 0
+	)
+
+	// Reserve the prompt slot before deciding panel heights.
+	slotOffsetDir := 0    // shift applied to Connections (only when host=viewDirectory)
+	slotOffsetClass := 0  // shift applied to Classes
+	slotOffsetRecord := 0 // shift applied to Records
+	if showInput {
+		switch inputHost {
+		case viewDirectory:
+			slotOffsetDir = inputSlot
+			slotOffsetClass = inputSlot
+			slotOffsetRecord = inputSlot
+		case viewClasses:
+			slotOffsetClass = inputSlot
+			slotOffsetRecord = inputSlot
+		case viewRecords, viewPreview, "":
+			// Default: above Records (used by `/` filter too).
+			slotOffsetRecord = inputSlot
+		}
+		inputOnLeft = (inputHost != viewPreview)
+	}
+
+	// Connections panel placement.
+	dirY0 += slotOffsetDir
+	dirY1 += slotOffsetDir
+
+	// Classes panel: vertical space left between Connections and Records.
+	classY0 = dirY1 + 1 + (slotOffsetClass - slotOffsetDir)
+	classH := (panelBottom - dirY1 - 1 - slotOffsetClass + slotOffsetDir) / 2
+	if classH < 3 {
+		classH = 3
+	}
+	classY1 = classY0 + classH - 1
+
+	// Records panel starts right after Classes, plus any extra slot above it.
+	recordY0 = classY1 + 1 + (slotOffsetRecord - slotOffsetClass)
+	if recordY0 >= panelBottom {
+		recordY0 = panelBottom - 3
+	}
+
+	// Input prompt coordinates, when shown on the left column.
+	if showInput && inputOnLeft {
+		inputX0 = 0
+		inputX1 = leftW - 1
+		switch inputHost {
+		case viewDirectory:
+			inputY0 = 0
+		case viewClasses:
+			inputY0 = dirY1 + 1
+		default:
+			inputY0 = classY1 + 1
+		}
+		inputY1 = inputY0 + inputSlot - 1
+	}
+
+	// [1] Connections panel
+	if v, err := gui.SetView(viewDirectory, 0, dirY0, leftW-1, dirY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "[1] Directory"
+		v.Title = "[1] Connections"
 		v.Frame = true
 		v.Wrap = false
 		v.Highlight = false
@@ -64,7 +136,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	}
 
 	// [2] Classes panel
-	if v, err := gui.SetView(viewClasses, 0, dirH, leftW-1, recY0-1, 0); err != nil {
+	if v, err := gui.SetView(viewClasses, 0, classY0, leftW-1, classY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
@@ -77,7 +149,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	}
 
 	// [3] Records panel — extends to panelBottom
-	if v, err := gui.SetView(viewRecords, 0, recY0, leftW-1, panelBottom, 0); err != nil {
+	if v, err := gui.SetView(viewRecords, 0, recordY0, leftW-1, panelBottom, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
@@ -122,10 +194,14 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.FgColor = gocui.ColorDefault | gocui.AttrBold
 	}
 
-	// Shared input prompt — always exists, shown/hidden on demand.
-	inputY0 := dirH - 3
-	inputY1 := dirH - 1
-	if v, err := gui.SetView(viewInput, 1, inputY0, leftW-2, inputY1, 0); err != nil {
+	// Shared input prompt — lives as a regular row above its host panel.
+	// We still create the view at startup so focus/keybindings work; when
+	// not visible it's parked off-screen above the viewport.
+	if !showInput {
+		inputX0, inputX1 = 0, leftW-1
+		inputY0, inputY1 = -inputSlot-1, -2
+	}
+	if v, err := gui.SetView(viewInput, inputX0, inputY0, inputX1, inputY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
@@ -135,6 +211,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Frame = true
 		v.FrameRunes = roundedFrame
 		v.Visible = false
+	}
+	if v, _ := gui.View(viewInput); v != nil && v.Visible {
+		_, _ = gui.SetViewOnTop(viewInput)
 	}
 
 	// Help popup overlay — centered, shown/hidden on demand.
@@ -203,6 +282,21 @@ func (g *Gui) infoText() string {
 	return "○ not connected"
 }
 
+// inputHostView resolves which left-column panel the input prompt should
+// attach itself to. The prompt is inserted above the host, shifting the
+// panels below it down.
+func (g *Gui) inputHostView() string {
+	host := g.state.prevView
+	switch host {
+	case viewDirectory, viewClasses, viewRecords:
+		return host
+	default:
+		return viewRecords
+	}
+}
+
+// renderDirectory refreshes the [1] Connections panel with both the Directory
+// and OASF endpoints the app is currently talking to.
 func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	v, err := gui.View(viewDirectory)
 	if err != nil {
@@ -210,14 +304,19 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	}
 	v.Clear()
 
-	icon := "●"
-	if !g.state.connected {
-		icon = "○"
+	dirIcon := "○"
+	if g.state.connected {
+		dirIcon = "●"
 	}
 
-	fmt.Fprintf(v, " %s %s\n", icon, g.state.serverAddr)
+	fmt.Fprintf(v, " %s Directory: %s\n", dirIcon, g.state.serverAddr)
 	if g.state.authMode != "" {
-		fmt.Fprintf(v, " auth: %s\n", g.state.authMode)
+		fmt.Fprintf(v, "   auth: %s\n", g.state.authMode)
 	}
-	fmt.Fprintf(v, "\n c: connect to a server")
+
+	oasfAddr := g.state.oasfAddr
+	if oasfAddr == "" {
+		oasfAddr = "(not configured)"
+	}
+	fmt.Fprintf(v, " ● OASF:      %s\n", oasfAddr)
 }

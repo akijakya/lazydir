@@ -53,8 +53,11 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 
-	// ── Directory panel ──────────────────────────────────────────────────────
+	// ── Connections panel ────────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewDirectory, 'c', gocui.ModNone, app.openConnectDialog); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewDirectory, 'o', gocui.ModNone, app.openOASFDialog); err != nil {
 		return err
 	}
 
@@ -404,10 +407,10 @@ func scrollViewDown(_ *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// ── Directory / connect dialog ────────────────────────────────────────────────
+// ── Connections: directory and OASF server dialogs ────────────────────────────
 
 func (app *Gui) openConnectDialog(g *gocui.Gui, v *gocui.View) error {
-	app.openInput("Connect to server (enter addr)", app.state.serverAddr,
+	app.openInput("Connect to directory (enter addr)", app.state.serverAddr,
 		func(addr string) {
 			if addr == "" {
 				return
@@ -415,13 +418,42 @@ func (app *Gui) openConnectDialog(g *gocui.Gui, v *gocui.View) error {
 			cfg := dirclient.Config{
 				ServerAddress: addr,
 				AuthMode:      app.state.authMode,
-				TLSSkipVerify: app.cfg.TLSSkipVerify,
-				TLSCAFile:     app.cfg.TLSCAFile,
-				TLSCertFile:   app.cfg.TLSCertFile,
-				TLSKeyFile:    app.cfg.TLSKeyFile,
-				AuthToken:     app.cfg.AuthToken,
+				TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
+				TLSCAFile:     app.cfg.Directory.TLSCAFile,
+				TLSCertFile:   app.cfg.Directory.TLSCertFile,
+				TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
+				AuthToken:     app.cfg.Directory.AuthToken,
 			}
 			go app.connect(cfg)
+		},
+		nil,
+	)
+	return nil
+}
+
+// openOASFDialog prompts the user for a new OASF schema server URL. On confirm
+// a fresh oasf.Client is constructed and any cached class info is dropped.
+func (app *Gui) openOASFDialog(g *gocui.Gui, v *gocui.View) error {
+	app.openInput("Connect to OASF server (enter URL)", app.state.oasfAddr,
+		func(addr string) {
+			if addr == "" {
+				return
+			}
+			client, err := oasf.NewClient(oasf.Config{ServerAddress: addr})
+			if err != nil {
+				app.g.Update(func(g *gocui.Gui) error {
+					app.renderPreviewText(g, "OASF configuration failed", err.Error())
+					return nil
+				})
+				return
+			}
+			app.g.Update(func(g *gocui.Gui) error {
+				app.state.oasfClient = client
+				app.state.oasfAddr = addr
+				app.renderDirectory(g)
+				app.autoPreviewClass(g)
+				return nil
+			})
 		},
 		nil,
 	)
@@ -454,13 +486,27 @@ func (app *Gui) pullRecord(cid string) {
 }
 
 func (app *Gui) fetchOASF(ct oasf.ClassType, name string) {
-	info, err := oasf.Fetch(ct, name)
+	client := app.state.oasfClient
+	if client == nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			app.renderPreviewText(g, "OASF not configured",
+				"No OASF server is configured. Press 'o' on the Connections panel to set one.")
+			return nil
+		})
+		return
+	}
+
+	info, err := client.Fetch(context.Background(), ct, name)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
 			app.renderPreviewText(g, "Error", err.Error())
 			return nil
 		}
-		app.renderPreviewText(g, fmt.Sprintf("%s %s", info.Type, info.Name), info.Description)
+		title := fmt.Sprintf("%s %s", info.Type, info.Name)
+		if info.Caption != "" {
+			title = fmt.Sprintf("%s %s (%s)", info.Type, info.Name, info.Caption)
+		}
+		app.renderPreviewText(g, title, info.Description)
 		return nil
 	})
 }

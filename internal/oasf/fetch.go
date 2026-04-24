@@ -1,15 +1,17 @@
 package oasf
 
 import (
+	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
+
+	sdkschema "github.com/agntcy/oasf-sdk/pkg/schema"
 )
 
-const baseURL = "https://schema.oasf.outshift.com/1.0.0"
+// DefaultServerAddress is used when the user does not override it.
+const DefaultServerAddress = "https://schema.oasf.outshift.com"
 
 // ClassType identifies the OASF taxonomy class type.
 type ClassType string
@@ -20,7 +22,7 @@ const (
 	ClassTypeModule ClassType = "modules"
 )
 
-// ClassInfo holds basic info about a taxonomy class.
+// ClassInfo holds user-visible info about a taxonomy class.
 type ClassInfo struct {
 	Name        string
 	Caption     string
@@ -28,112 +30,118 @@ type ClassInfo struct {
 	Type        ClassType
 }
 
-var (
-	mu    sync.Mutex
-	cache = map[string]*ClassInfo{}
-)
+// Config configures the OASF schema client.
+type Config struct {
+	// ServerAddress is the base URL of the OASF schema server, e.g.
+	// "https://schema.oasf.outshift.com". Protocol is optional.
+	ServerAddress string
+}
 
-// Fetch retrieves the description for a class from the OASF API.
-// Results are cached in memory.
-func Fetch(classType ClassType, name string) (*ClassInfo, error) {
-	key := string(classType) + "/" + name
-	mu.Lock()
-	if v, ok := cache[key]; ok {
-		mu.Unlock()
+// Client wraps the OASF SDK schema client and caches class info lookups.
+type Client struct {
+	cfg    Config
+	sdk    *sdkschema.Schema
+	cacheM sync.Mutex
+	cache  map[string]*ClassInfo
+}
+
+// NewClient constructs a new OASF client backed by the oasf-sdk/pkg/schema.
+// The SDK performs URL normalization, so http/https schemes are handled.
+func NewClient(cfg Config) (*Client, error) {
+	if cfg.ServerAddress == "" {
+		return nil, errors.New("OASF server address is required")
+	}
+
+	sdk, err := sdkschema.New(cfg.ServerAddress, sdkschema.WithCache(true))
+	if err != nil {
+		return nil, fmt.Errorf("creating OASF schema client: %w", err)
+	}
+
+	return &Client{
+		cfg:   cfg,
+		sdk:   sdk,
+		cache: map[string]*ClassInfo{},
+	}, nil
+}
+
+// ServerAddress returns the URL the client is currently pointed at.
+func (c *Client) ServerAddress() string {
+	return c.cfg.ServerAddress
+}
+
+// Fetch retrieves the description for a taxonomy class by its fully-qualified
+// name (e.g. "natural_language_processing/text_completion"). The lookup walks
+// the nested category tree returned by the SDK until it finds a matching node.
+func (c *Client) Fetch(ctx context.Context, classType ClassType, name string) (*ClassInfo, error) {
+	key := string(classType) + "|" + name
+	c.cacheM.Lock()
+	if v, ok := c.cache[key]; ok {
+		c.cacheM.Unlock()
 		return v, nil
 	}
-	mu.Unlock()
+	c.cacheM.Unlock()
 
-	url := fmt.Sprintf("%s/%s/%s", baseURL, classType, name)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(url) //nolint:noctx
+	// Budget the lookup so the UI does not hang on slow networks.
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	taxonomy, err := c.getTaxonomy(reqCtx, classType)
 	if err != nil {
-		return nil, fmt.Errorf("OASF request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("class %q not found in OASF schema", name)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OASF returned status %d for %s", resp.StatusCode, url)
+		return nil, err
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading OASF response: %w", err)
+	item, ok := findItem(taxonomy, name)
+	if !ok {
+		return nil, fmt.Errorf("class %q not found in OASF %s taxonomy", name, classType)
 	}
 
 	info := &ClassInfo{
-		Name:        name,
+		Name:        item.Name,
+		Caption:     item.Caption,
+		Description: item.Description,
 		Type:        classType,
-		Description: extractDescription(string(body)),
+	}
+	if info.Description == "" {
+		info.Description = "No description available."
 	}
 
-	mu.Lock()
-	cache[key] = info
-	mu.Unlock()
+	c.cacheM.Lock()
+	c.cache[key] = info
+	c.cacheM.Unlock()
 
 	return info, nil
 }
 
-// extractDescription pulls the human-readable description from the OASF HTML page.
-// The page structure contains descriptive paragraphs after the header.
-func extractDescription(html string) string {
-	var lines []string
-	// Strip HTML tags and extract visible text lines.
-	inTag := false
-	var cur strings.Builder
-	for _, ch := range html {
-		switch {
-		case ch == '<':
-			inTag = true
-			text := strings.TrimSpace(cur.String())
-			if text != "" {
-				lines = append(lines, text)
+func (c *Client) getTaxonomy(ctx context.Context, classType ClassType) (sdkschema.Taxonomy, error) {
+	switch classType {
+	case ClassTypeSkill:
+		return c.sdk.GetSchemaSkills(ctx)
+	case ClassTypeDomain:
+		return c.sdk.GetSchemaDomains(ctx)
+	case ClassTypeModule:
+		return c.sdk.GetSchemaModules(ctx)
+	default:
+		return nil, fmt.Errorf("unknown OASF class type %q", classType)
+	}
+}
+
+// findItem walks the nested taxonomy tree and returns the TaxonomyItem whose
+// Name matches the supplied identifier. The SDK Taxonomy is a map of top-level
+// categories, each containing Classes which may themselves be categories.
+func findItem(root sdkschema.Taxonomy, name string) (sdkschema.TaxonomyItem, bool) {
+	return findInItems(map[string]sdkschema.TaxonomyItem(root), name)
+}
+
+func findInItems(items map[string]sdkschema.TaxonomyItem, name string) (sdkschema.TaxonomyItem, bool) {
+	for _, item := range items {
+		if item.Name == name {
+			return item, true
+		}
+		if len(item.Classes) > 0 {
+			if child, ok := findInItems(item.Classes, name); ok {
+				return child, true
 			}
-			cur.Reset()
-		case ch == '>':
-			inTag = false
-		case !inTag:
-			cur.WriteRune(ch)
 		}
 	}
-	if text := strings.TrimSpace(cur.String()); text != "" {
-		lines = append(lines, text)
-	}
-
-	// Filter out boilerplate lines and collect meaningful description lines.
-	var result []string
-	skip := map[string]bool{
-		"Open Agentic Schema Framework": true,
-		"Card view Taxonomy view":       true,
-		"JSON Schema Sample Validate":   true,
-		"Base Attributes Optional Attributes": true,
-		"Decline Accept":                true,
-	}
-	for _, line := range lines {
-		if skip[line] {
-			continue
-		}
-		// Skip lines that are just IDs in brackets like "[101]".
-		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
-			continue
-		}
-		// Skip navigation artifacts.
-		if strings.Contains(line, "OASF Server version") ||
-			strings.Contains(line, "Terms &") ||
-			strings.Contains(line, "Privacy Policy") ||
-			strings.Contains(line, "We use cookies") {
-			continue
-		}
-		if line != "" {
-			result = append(result, line)
-		}
-	}
-
-	if len(result) == 0 {
-		return "No description available."
-	}
-	return strings.Join(result, "\n")
+	return sdkschema.TaxonomyItem{}, false
 }

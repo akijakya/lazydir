@@ -30,9 +30,10 @@ var globalBindings = []binding{
 // perPanelBindings defines bindings per named view.
 var perPanelBindings = map[string]panelBindings{
 	viewDirectory: {
-		title: "[1] Directory",
+		title: "[1] Connections",
 		bindings: []binding{
-			{"c", "connect to server", true},
+			{"c", "connect to directory", true},
+			{"o", "connect to OASF server", true},
 		},
 	},
 	viewClasses: {

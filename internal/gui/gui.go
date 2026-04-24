@@ -37,12 +37,16 @@ func (t classTab) String() string {
 type appState struct {
 	mu sync.Mutex
 
+	// Directory connection
 	serverAddr string
 	authMode   string
 	connected  bool
 	loading    bool
+	client     *dirclient.Client
 
-	client *dirclient.Client
+	// OASF connection
+	oasfAddr   string
+	oasfClient *oasf.Client
 
 	// full record list
 	allRecords []*dirclient.RecordSummary
@@ -75,20 +79,33 @@ type appState struct {
 	helpPrevView string // view to return to when help closes
 }
 
+// Config bundles everything needed to start the GUI.
+type Config struct {
+	Directory dirclient.Config
+	OASF      oasf.Config
+}
+
 // Gui is the top-level lazydir GUI object.
 type Gui struct {
 	g     *gocui.Gui
 	state appState
-	cfg   dirclient.Config
+	cfg   Config
 }
 
 // New creates and starts the lazydir GUI.
-func New(cfg dirclient.Config) error {
+func New(cfg Config) error {
+	oasfClient, err := oasf.NewClient(cfg.OASF)
+	if err != nil {
+		return fmt.Errorf("configuring OASF client: %w", err)
+	}
+
 	app := &Gui{
 		cfg: cfg,
 		state: appState{
-			serverAddr: cfg.ServerAddress,
-			authMode:   cfg.AuthMode,
+			serverAddr: cfg.Directory.ServerAddress,
+			authMode:   cfg.Directory.AuthMode,
+			oasfAddr:   cfg.OASF.ServerAddress,
+			oasfClient: oasfClient,
 		},
 	}
 
@@ -112,8 +129,8 @@ func New(cfg dirclient.Config) error {
 		return fmt.Errorf("binding keys: %w", err)
 	}
 
-	// Kick off the initial connection in the background.
-	go app.connect(cfg)
+	// Kick off the initial directory connection in the background.
+	go app.connect(cfg.Directory)
 
 	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)

@@ -8,30 +8,30 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 ```
 ┌────────────────────────┬──────────────────────────────────────────────┐
-│ [1] Directory          │ [Preview]                                     │
-│  ● localhost:8888      │                                               │
-│  c: connect            │  Shows either:                                │
-├────────────────────────│  • OASF skill / domain / module description   │
-│ [2] Classes            │  • Full record JSON (syntax highlighted)      │
-│  Skills │ Domains │ Mod│                                               │
-│  > natural_language…   │                                               │
-│    text_to_code        │                                               │
-│    …                   │                                               │
-├────────────────────────│                                               │
-│ [3] Records  /filter   │                                               │
-│  > cisco.com/agent  v1 │                                               │
-│    example.com/bot  v2 │                                               │
-│    …                   │                                               │
+│ [1] Connections        │ [Preview]                                    │
+│  ● Directory: localh…  │                                              │
+│  ● OASF: schema.oasf…  │  Shows either:                               │
+├────────────────────────│  • OASF skill / domain / module description  │
+│ [2] Classes            │  • Full record JSON (syntax highlighted)     │
+│  Skills │ Domains │ Mod│                                              │
+│  > natural_language…   │                                              │
+│    text_to_code        │                                              │
+│    …                   │                                              │
+├────────────────────────│                                              │
+│ [3] Records  /filter   │                                              │
+│  > cisco.com/agent  v1 │                                              │
+│    example.com/bot  v2 │                                              │
+│    …                   │                                              │
 └────────────────────────┴──────────────────────────────────────────────┘
-  q:quit  tab:focus  ↑↓:nav  enter:select  /:filter  c:connect  r:refresh
+  navigate: ↑↓  focus: tab  filter: /  connect dir: c  connect oasf: o
 ```
 
 ### Panel descriptions
 
 | Panel | Purpose |
 |-------|---------|
-| **[1] Directory** | Shows the current server address and connection status. Press `c` to open an inline dialog to connect to a different server. |
-| **[2] Classes** | Displays taxonomy classes (Skills, Domains, Modules) aggregated from all records. Use `tab` to switch between the three tabs. Selecting a class fetches and displays its OASF description in the preview panel and filters the records list. |
+| **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
+| **[2] Classes** | Displays taxonomy classes (Skills, Domains, Modules) aggregated from all records. Use `tab` to switch between the three tabs. Moving the cursor onto a class fetches its OASF description via the `oasf-sdk` and displays it in the preview panel; pressing `enter` additionally filters the records list. |
 | **[3] Records** | Lists all records (or a filtered subset when a class is selected). Shows name and version. Use `/` to filter by name. Press `enter` to load the full record JSON in the preview panel. |
 | **Preview** | The right two-thirds of the screen. Displays either an OASF class description (plain text) or syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
 
@@ -88,6 +88,7 @@ lazydir [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--server-addr`, `-s` | `localhost:8888` | Directory server address |
+| `--oasf-addr`, `-o` | `https://schema.oasf.outshift.com` | OASF schema server URL (used via `oasf-sdk`) |
 | `--auth-mode`, `-a` | _(auto-detect)_ | Auth mode: `insecure`, `tls`, `oidc`, `jwt`, `x509` |
 | `--auth-token` | | Pre-issued Bearer token (for CI / non-interactive) |
 | `--tls-ca-file` | | TLS CA certificate file path |
@@ -100,7 +101,8 @@ lazydir [flags]
 
 | Variable | Description |
 |----------|-------------|
-| `DIRECTORY_CLIENT_SERVER_ADDRESS` | Default server address (overridden by `--server-addr`) |
+| `DIRECTORY_CLIENT_SERVER_ADDRESS` | Default Directory server address (overridden by `--server-addr`) |
+| `OASF_SERVER_ADDRESS` | Default OASF schema server URL (overridden by `--oasf-addr`) |
 | `DEBUG` | Set to any value to write a `lazydir_debug.log` file |
 
 ### Examples
@@ -125,17 +127,20 @@ lazydir -s my-dir.example.com:443 \
 |-----|--------|
 | `q` / `ctrl+c` | Quit |
 | `tab` / `shift+tab` | Cycle panel focus |
-| `1` | Focus the Directory panel |
+| `1` | Focus the Connections panel |
 | `2` | Focus the Classes panel |
 | `3` | Focus the Records panel |
+| `0` | Focus the Preview panel |
 | `↑` / `k` | Move cursor up |
 | `↓` / `j` | Move cursor down |
 | `enter` | Select item (preview record / filter by class) |
 | `esc` | Clear filter / dismiss dialog |
 | `/` | Start name filter (Records panel) |
 | `tab` (Classes panel) | Switch between Skills / Domains / Modules tabs |
-| `c` (Directory panel) | Open connect dialog |
+| `c` (Connections panel) | Open Directory connect dialog |
+| `o` (Connections panel) | Open OASF server connect dialog |
 | `r` | Refresh records from server |
+| `?` | Show the full keybinding popup for the focused panel |
 | `pgup` / `pgdown` | Scroll preview panel (when focused) |
 
 ## Architecture
