@@ -11,8 +11,10 @@ const (
 	viewClasses   = "classes"
 	viewRecords   = "records"
 	viewPreview   = "preview"
-	viewStatus    = "status"
-	viewInput     = "input" // shared editable prompt view, shown on demand
+	viewOptions   = "options" // bottom-left: context keybindings (like lazygit)
+	viewInfo      = "info"    // bottom-right: connection/version info
+	viewInput     = "input"   // shared editable prompt view, shown on demand
+	viewHelp      = "help"    // ? popup overlay, shown on demand
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
@@ -25,13 +27,27 @@ var listViews = []string{viewClasses, viewRecords}
 func (g *Gui) layout(gui *gocui.Gui) error {
 	maxX, maxY := gui.Size()
 
+	// The bottom bar occupies the last row (maxY-1).
+	// All panels extend down to maxY-2, so they sit flush against it.
+	// For frameless views, content cell y=0 is placed at screen row v.y0+1.
+	// So to render at terminal row (maxY-1), we need v.y0=maxY-2, v.y1=maxY.
+	bottomY0 := maxY - 2 // y0 for bottom bar views
+	bottomY1 := maxY     // y1 for bottom bar views (one past screen, allowed)
+	panelBottom := maxY - 2
+
 	leftW := maxX / 3
 	rightX0 := leftW
-	rightX1 := maxX - 1
-	statusY := maxY - 2
+
+	// Bottom bar split: options (left, flexible) | info (right, fixed)
+	infoText := g.infoText()
+	infoW := len(infoText) + 2
+	if infoW > maxX/2 {
+		infoW = maxX / 2
+	}
+	optionsX1 := maxX - infoW - 2
 
 	dirH := 5
-	classH := (statusY - dirH) / 2
+	classH := (panelBottom - dirH) / 2
 	recY0 := dirH + classH
 
 	// [1] Directory panel
@@ -54,27 +70,27 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		}
 		v.Title = "[2] Classes"
 		v.Frame = true
-		v.Highlight = false // toggled by syncHighlight
-		v.SelBgColor = gocui.Get256Color(8) // base16 color 8: bright black / dark grey
+		v.Highlight = false
+		v.SelBgColor = gocui.Get256Color(8)
 		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 	}
 
-	// [3] Records panel
-	if v, err := gui.SetView(viewRecords, 0, recY0, leftW-1, statusY-1, 0); err != nil {
+	// [3] Records panel — extends to panelBottom
+	if v, err := gui.SetView(viewRecords, 0, recY0, leftW-1, panelBottom, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
 		v.Title = "[3] Records"
 		v.Frame = true
-		v.Highlight = false // toggled by syncHighlight
-		v.SelBgColor = gocui.Get256Color(8) // base16 color 8: bright black / dark grey
+		v.Highlight = false
+		v.SelBgColor = gocui.Get256Color(8)
 		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 	}
 
-	// Preview panel (right 2/3)
-	if v, err := gui.SetView(viewPreview, rightX0, 0, rightX1, statusY-1, 0); err != nil {
+	// Preview panel — extends to panelBottom
+	if v, err := gui.SetView(viewPreview, rightX0, 0, maxX-1, panelBottom, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
@@ -85,12 +101,25 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.CanScrollPastBottom = true
 	}
 
-	// Status bar — no frame, no rounding
-	if v, err := gui.SetView(viewStatus, 0, statusY, maxX-1, maxY-1, 0); err != nil {
+	// Bottom-left: options bar — properties set every layout call (no frame)
+	if _, err := gui.SetView(viewOptions, 0, bottomY0, optionsX1, bottomY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
+	}
+	if v, _ := gui.View(viewOptions); v != nil {
 		v.Frame = false
+	}
+
+	// Bottom-right: info bar — properties set every layout call (no frame)
+	if _, err := gui.SetView(viewInfo, optionsX1+1, bottomY0, maxX-1, bottomY1, 0); err != nil {
+		if !gocui.IsUnknownView(err) {
+			return err
+		}
+	}
+	if v, _ := gui.View(viewInfo); v != nil {
+		v.Frame = false
+		v.FgColor = gocui.ColorDefault | gocui.AttrBold
 	}
 
 	// Shared input prompt — always exists, shown/hidden on demand.
@@ -108,7 +137,23 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
-	// First-time init: write status bar and set focus.
+	// Help popup overlay — centered, shown/hidden on demand.
+	helpW := 54
+	helpH := 22
+	helpX0 := (maxX - helpW) / 2
+	helpY0 := (maxY - helpH) / 2
+	if v, err := gui.SetView(viewHelp, helpX0, helpY0, helpX0+helpW, helpY0+helpH, 0); err != nil {
+		if !gocui.IsUnknownView(err) {
+			return err
+		}
+		v.Title = " Keybindings  (esc/? to close) "
+		v.Frame = true
+		v.FrameRunes = roundedFrame
+		v.Wrap = false
+		v.Visible = false
+	}
+
+	// First-time init: populate bottom bar and set focus.
 	if gui.CurrentView() == nil {
 		g.renderStatus(gui)
 		g.renderDirectory(gui)
@@ -134,12 +179,28 @@ func (g *Gui) syncHighlight(gui *gocui.Gui, focused string) {
 }
 
 func (g *Gui) renderStatus(gui *gocui.Gui) {
-	v, err := gui.View(viewStatus)
-	if err != nil {
-		return
+	focused := ""
+	if cv := gui.CurrentView(); cv != nil {
+		focused = cv.Name()
 	}
-	v.Clear()
-	fmt.Fprint(v, "q:quit  tab:focus  ↑↓/jk:nav  enter:select  /:filter  h/l:tab  c:connect  r:refresh")
+
+	if v, err := gui.View(viewOptions); err == nil {
+		v.Clear()
+		fmt.Fprint(v, optionsBarText(focused, v.InnerWidth()))
+	}
+
+	if v, err := gui.View(viewInfo); err == nil {
+		v.Clear()
+		fmt.Fprint(v, g.infoText())
+	}
+}
+
+// infoText returns the short string shown in the right info bar.
+func (g *Gui) infoText() string {
+	if g.state.connected {
+		return "● " + g.state.serverAddr
+	}
+	return "○ not connected"
 }
 
 func (g *Gui) renderDirectory(gui *gocui.Gui) {

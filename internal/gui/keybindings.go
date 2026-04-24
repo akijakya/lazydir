@@ -143,6 +143,34 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		}
 	}
 
+	// ? opens help popup for all main panels
+	for _, name := range []string{"", viewDirectory, viewClasses, viewRecords, viewPreview} {
+		if err := g.SetKeybinding(name, '?', gocui.ModNone, app.openHelp); err != nil {
+			return err
+		}
+	}
+	// esc and ? close the help popup
+	if err := g.SetKeybinding(viewHelp, gocui.KeyEsc, gocui.ModNone, app.closeHelp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewHelp, '?', gocui.ModNone, app.closeHelp); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewHelp, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
+		return err
+	}
+	// scroll help popup
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewHelp, key, gocui.ModNone, app.previewScrollUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewHelp, key, gocui.ModNone, app.previewScrollDown); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -182,6 +210,7 @@ func (app *Gui) focusTo(g *gocui.Gui, name string) error {
 		return err
 	}
 	app.syncHighlight(g, name)
+	app.renderStatus(g)
 	return nil
 }
 
@@ -348,24 +377,30 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 // ── Preview panel handlers ────────────────────────────────────────────────────
 
 func (app *Gui) previewScrollUp(g *gocui.Gui, v *gocui.View) error {
-	pv, err := g.View(viewPreview)
-	if err != nil {
+	return scrollViewUp(g, v)
+}
+
+func (app *Gui) previewScrollDown(g *gocui.Gui, v *gocui.View) error {
+	return scrollViewDown(g, v)
+}
+
+func scrollViewUp(_ *gocui.Gui, v *gocui.View) error {
+	if v == nil {
 		return nil
 	}
-	_, oy := pv.Origin()
+	_, oy := v.Origin()
 	if oy > 0 {
-		_ = pv.SetOrigin(0, oy-3)
+		_ = v.SetOrigin(0, oy-3)
 	}
 	return nil
 }
 
-func (app *Gui) previewScrollDown(g *gocui.Gui, v *gocui.View) error {
-	pv, err := g.View(viewPreview)
-	if err != nil {
+func scrollViewDown(_ *gocui.Gui, v *gocui.View) error {
+	if v == nil {
 		return nil
 	}
-	_, oy := pv.Origin()
-	_ = pv.SetOrigin(0, oy+3)
+	_, oy := v.Origin()
+	_ = v.SetOrigin(0, oy+3)
 	return nil
 }
 
@@ -406,40 +441,26 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 // ── Async actions ─────────────────────────────────────────────────────────────
 
 func (app *Gui) pullRecord(cid string) {
-	app.g.Update(func(g *gocui.Gui) error {
-		app.setStatus("Loading record " + cid[:min(16, len(cid))] + "…")
-		return nil
-	})
-
 	ctx := context.Background()
 	jsonStr, err := app.state.client.PullJSON(ctx, cid)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
 			app.renderPreviewText(g, "Error", err.Error())
-			app.setStatus("Failed to load record: " + err.Error())
 			return nil
 		}
 		app.renderPreviewJSON(g, cid, jsonStr)
-		app.setStatus(fmt.Sprintf("Showing record %s", cid[:min(20, len(cid))]))
 		return nil
 	})
 }
 
 func (app *Gui) fetchOASF(ct oasf.ClassType, name string) {
-	app.g.Update(func(g *gocui.Gui) error {
-		app.setStatus("Fetching OASF info for " + name + "…")
-		return nil
-	})
-
 	info, err := oasf.Fetch(ct, name)
 	app.g.Update(func(g *gocui.Gui) error {
 		if err != nil {
 			app.renderPreviewText(g, "Error", err.Error())
-			app.setStatus("OASF fetch failed: " + err.Error())
 			return nil
 		}
 		app.renderPreviewText(g, fmt.Sprintf("%s %s", info.Type, info.Name), info.Description)
-		app.setStatus("Showing OASF description for " + name)
 		return nil
 	})
 }
@@ -491,4 +512,45 @@ func (app *Gui) autoPreviewClass(g *gocui.Gui) {
 		_ = pv.SetOrigin(0, 0)
 	}
 	go app.fetchOASF(ct, name)
+}
+
+// ── Help popup ────────────────────────────────────────────────────────────────
+
+func (app *Gui) openHelp(g *gocui.Gui, v *gocui.View) error {
+	hv, err := g.View(viewHelp)
+	if err != nil {
+		return nil
+	}
+
+	// Remember where we came from.
+	if cv := g.CurrentView(); cv != nil && cv.Name() != viewHelp {
+		app.state.helpPrevView = cv.Name()
+	}
+
+	// Populate content.
+	focused := app.state.helpPrevView
+	hv.Clear()
+	_ = hv.SetOrigin(0, 0)
+	for _, line := range helpPopupLines(focused) {
+		fmt.Fprintln(hv, line)
+	}
+
+	hv.Visible = true
+	_, _ = g.SetCurrentView(viewHelp)
+	_, _ = g.SetViewOnTop(viewHelp)
+	return nil
+}
+
+func (app *Gui) closeHelp(g *gocui.Gui, v *gocui.View) error {
+	hv, err := g.View(viewHelp)
+	if err != nil {
+		return nil
+	}
+	hv.Visible = false
+
+	target := app.state.helpPrevView
+	if target == "" {
+		target = viewRecords
+	}
+	return app.focusTo(g, target)
 }

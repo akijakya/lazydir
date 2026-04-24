@@ -41,7 +41,6 @@ type appState struct {
 	authMode   string
 	connected  bool
 	loading    bool
-	statusMsg  string
 
 	client *dirclient.Client
 
@@ -71,6 +70,9 @@ type appState struct {
 	prevView        string            // view to return focus to on dismiss
 	onInputConfirm  func(string)      // called with TextArea content on enter
 	onInputCancel   func()            // called on esc
+
+	// help popup state
+	helpPrevView string // view to return to when help closes
 }
 
 // Gui is the top-level lazydir GUI object.
@@ -122,18 +124,14 @@ func New(cfg dirclient.Config) error {
 
 // connect dials the directory server and loads records.
 func (app *Gui) connect(cfg dirclient.Config) {
-	app.g.Update(func(g *gocui.Gui) error {
-		app.setStatus("Connecting to " + cfg.ServerAddress + "…")
-		return nil
-	})
-
 	ctx := context.Background()
 	c, err := dirclient.Connect(ctx, cfg)
 	if err != nil {
 		app.g.Update(func(g *gocui.Gui) error {
 			app.state.connected = false
-			app.setStatus("Connection failed: " + err.Error())
 			app.renderDirectory(g)
+			app.renderStatus(g)
+			app.renderPreviewText(g, "Connection failed", err.Error())
 			return nil
 		})
 		return
@@ -148,7 +146,7 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.authMode = cfg.AuthMode
 		app.state.connected = true
 		app.renderDirectory(g)
-		app.setStatus("Connected. Loading records…")
+		app.renderStatus(g)
 		return nil
 	})
 
@@ -161,7 +159,7 @@ func (app *Gui) loadRecords(c *dirclient.Client) {
 	summaries, err := c.ListAll(ctx)
 	if err != nil {
 		app.g.Update(func(g *gocui.Gui) error {
-			app.setStatus("Failed to load records: " + err.Error())
+			app.renderPreviewText(g, "Load failed", err.Error())
 			return nil
 		})
 		return
@@ -180,7 +178,6 @@ func (app *Gui) loadRecords(c *dirclient.Client) {
 		app.applyFilters()
 		app.renderClassesView(g)
 		app.renderRecordsView(g)
-		app.setStatus(fmt.Sprintf("Loaded %d records.", len(summaries)))
 		app.autoPreviewRecord(g)
 		return nil
 	})
@@ -237,16 +234,6 @@ func recordMatchesClass(r *dirclient.RecordSummary, ct oasf.ClassType, name stri
 		}
 	}
 	return false
-}
-
-func (app *Gui) setStatus(msg string) {
-	app.state.statusMsg = msg
-	v, err := app.g.View(viewStatus)
-	if err != nil {
-		return
-	}
-	v.Clear()
-	fmt.Fprint(v, msg)
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,
