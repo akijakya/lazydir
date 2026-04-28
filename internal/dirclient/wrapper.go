@@ -26,12 +26,17 @@ type Config struct {
 
 // RecordSummary is a lightweight representation of a directory record.
 type RecordSummary struct {
-	CID     string
-	Name    string
-	Version string
-	Skills  []string
-	Domains []string
-	Modules []string
+	CID           string
+	Name          string
+	Version       string
+	SchemaVersion string
+	Authors       []string
+	Skills        []string
+	Domains       []string
+	Modules       []string
+	// Signed indicates the record carries a signature in the OASF payload.
+	// Used as a best-effort proxy for "verified" without a server round-trip.
+	Signed bool
 }
 
 // Client wraps the agntcy/dir gRPC client.
@@ -133,29 +138,66 @@ func (c *Client) PullJSON(ctx context.Context, cid string) (string, error) {
 	return string(b), nil
 }
 
-// ExtractClasses returns unique skill, domain, and module names from a list of summaries.
+// FilterValues holds the unique values present in a record set for each
+// filterable field. Used to populate the [2] Filters panel options lists.
+type FilterValues struct {
+	Skills         []string
+	Domains        []string
+	Modules        []string
+	OASFVersions   []string
+	Versions       []string
+	Authors        []string
+}
+
+// ExtractClasses returns unique skill, domain, and module names from a list
+// of summaries. Kept for backward compatibility with callers that only need
+// the taxonomy values.
 func ExtractClasses(summaries []*RecordSummary) (skills, domains, modules []string) {
-	skillSet := map[string]bool{}
-	domainSet := map[string]bool{}
-	moduleSet := map[string]bool{}
+	v := ExtractFilterValues(summaries)
+	return v.Skills, v.Domains, v.Modules
+}
+
+// ExtractFilterValues collects the unique values for every supported filter
+// category across all records.
+func ExtractFilterValues(summaries []*RecordSummary) FilterValues {
+	skills := map[string]bool{}
+	domains := map[string]bool{}
+	modules := map[string]bool{}
+	oasfVersions := map[string]bool{}
+	versions := map[string]bool{}
+	authors := map[string]bool{}
 
 	for _, s := range summaries {
 		for _, v := range s.Skills {
-			skillSet[v] = true
+			skills[v] = true
 		}
 		for _, v := range s.Domains {
-			domainSet[v] = true
+			domains[v] = true
 		}
 		for _, v := range s.Modules {
-			moduleSet[v] = true
+			modules[v] = true
+		}
+		for _, v := range s.Authors {
+			if v != "" {
+				authors[v] = true
+			}
+		}
+		if s.SchemaVersion != "" {
+			oasfVersions[s.SchemaVersion] = true
+		}
+		if s.Version != "" {
+			versions[s.Version] = true
 		}
 	}
 
-	skills = sortedKeys(skillSet)
-	domains = sortedKeys(domainSet)
-	modules = sortedKeys(moduleSet)
-
-	return skills, domains, modules
+	return FilterValues{
+		Skills:       sortedKeys(skills),
+		Domains:      sortedKeys(domains),
+		Modules:      sortedKeys(modules),
+		OASFVersions: sortedKeys(oasfVersions),
+		Versions:     sortedKeys(versions),
+		Authors:      sortedKeys(authors),
+	}
 }
 
 func sortedKeys(m map[string]bool) []string {
@@ -191,6 +233,8 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		}
 		s.Name = r.GetName()
 		s.Version = r.GetVersion()
+		s.SchemaVersion = r.GetSchemaVersion()
+		s.Authors = append(s.Authors, r.GetAuthors()...)
 		for _, sk := range r.GetSkills() {
 			if sk.GetName() != "" {
 				s.Skills = append(s.Skills, sk.GetName())
@@ -213,6 +257,8 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		}
 		s.Name = r.GetName()
 		s.Version = r.GetVersion()
+		s.SchemaVersion = r.GetSchemaVersion()
+		s.Authors = append(s.Authors, r.GetAuthors()...)
 	case decoded.HasV1Alpha1():
 		r := decoded.GetV1Alpha1()
 		if r == nil {
@@ -220,6 +266,11 @@ func extractSummary(record *corev1.Record) *RecordSummary {
 		}
 		s.Name = r.GetName()
 		s.Version = r.GetVersion()
+		s.SchemaVersion = r.GetSchemaVersion()
+		s.Authors = append(s.Authors, r.GetAuthors()...)
+		if sig := r.GetSignature(); sig != nil && sig.GetSignature() != "" {
+			s.Signed = true
+		}
 	default:
 		return nil
 	}

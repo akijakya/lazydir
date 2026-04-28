@@ -26,7 +26,7 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding("", '1', gocui.ModNone, app.focusView(viewDirectory)); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding("", '2', gocui.ModNone, app.focusView(viewClasses)); err != nil {
+	if err := g.SetKeybinding("", '2', gocui.ModNone, app.focusView(viewFilters)); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding("", '3', gocui.ModNone, app.focusView(viewRecords)); err != nil {
@@ -61,27 +61,24 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 
-	// ── Classes panel ────────────────────────────────────────────────────────
+	// ── Filters panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
-		if err := g.SetKeybinding(viewClasses, key, gocui.ModNone, app.classCursorUp); err != nil {
+		if err := g.SetKeybinding(viewFilters, key, gocui.ModNone, app.filterCursorUp); err != nil {
 			return err
 		}
 	}
 	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
-		if err := g.SetKeybinding(viewClasses, key, gocui.ModNone, app.classCursorDown); err != nil {
+		if err := g.SetKeybinding(viewFilters, key, gocui.ModNone, app.filterCursorDown); err != nil {
 			return err
 		}
 	}
-	if err := g.SetKeybinding(viewClasses, gocui.KeyEnter, gocui.ModNone, app.classSelect); err != nil {
+	if err := g.SetKeybinding(viewFilters, gocui.KeyEnter, gocui.ModNone, app.filterEnter); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewClasses, gocui.KeyEsc, gocui.ModNone, app.classClearFilter); err != nil {
+	if err := g.SetKeybinding(viewFilters, gocui.KeyTab, gocui.ModNone, app.filterTab); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewClasses, 'l', gocui.ModNone, app.classNextTab); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewClasses, 'h', gocui.ModNone, app.classPrevTab); err != nil {
+	if err := g.SetKeybinding(viewFilters, gocui.KeyEsc, gocui.ModNone, app.filterEsc); err != nil {
 		return err
 	}
 
@@ -125,10 +122,10 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// Mouse wheel scrolling on list panels
-	if err := g.SetKeybinding(viewClasses, gocui.MouseWheelUp, gocui.ModNone, app.classCursorUp); err != nil {
+	if err := g.SetKeybinding(viewFilters, gocui.MouseWheelUp, gocui.ModNone, app.filterCursorUp); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewClasses, gocui.MouseWheelDown, gocui.ModNone, app.classCursorDown); err != nil {
+	if err := g.SetKeybinding(viewFilters, gocui.MouseWheelDown, gocui.ModNone, app.filterCursorDown); err != nil {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.MouseWheelUp, gocui.ModNone, app.recordCursorUp); err != nil {
@@ -139,7 +136,7 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// Mouse click focuses the clicked panel
-	for _, name := range []string{viewDirectory, viewClasses, viewRecords, viewPreview} {
+	for _, name := range []string{viewDirectory, viewFilters, viewRecords, viewPreview} {
 		n := name
 		if err := g.SetKeybinding(n, gocui.MouseLeft, gocui.ModNone, app.focusView(n)); err != nil {
 			return err
@@ -147,7 +144,7 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ? opens help popup for all main panels
-	for _, name := range []string{"", viewDirectory, viewClasses, viewRecords, viewPreview} {
+	for _, name := range []string{"", viewDirectory, viewFilters, viewRecords, viewPreview} {
 		if err := g.SetKeybinding(name, '?', gocui.ModNone, app.openHelp); err != nil {
 			return err
 		}
@@ -204,7 +201,7 @@ func (app *Gui) inputCancel(g *gocui.Gui, v *gocui.View) error {
 
 // ── Focus helpers ─────────────────────────────────────────────────────────────
 
-var focusOrder = []string{viewDirectory, viewClasses, viewRecords, viewPreview}
+var focusOrder = []string{viewDirectory, viewFilters, viewRecords, viewPreview}
 
 // focusTo sets the current view and updates highlight state on list panels.
 func (app *Gui) focusTo(g *gocui.Gui, name string) error {
@@ -248,76 +245,114 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 	return app.focusTo(g, focusOrder[next])
 }
 
-// ── Classes panel handlers ────────────────────────────────────────────────────
+// ── Filters panel handlers ────────────────────────────────────────────────────
 
-func (app *Gui) classCursorUp(g *gocui.Gui, v *gocui.View) error {
-	if app.state.classCursor > 0 {
-		app.state.classCursor--
-		app.renderClassesView(g)
-		app.autoPreviewClass(g)
-	}
-	return nil
-}
-
-func (app *Gui) classCursorDown(g *gocui.Gui, v *gocui.View) error {
-	items := app.currentClassItems()
-	if app.state.classCursor < len(items) {
-		app.state.classCursor++
-		app.renderClassesView(g)
-		app.autoPreviewClass(g)
-	}
-	return nil
-}
-
-func (app *Gui) classSelect(g *gocui.Gui, v *gocui.View) error {
-	items := app.currentClassItems()
-	cursor := app.state.classCursor
-
-	if cursor == 0 {
-		app.state.selectedClass = ""
-	} else if cursor-1 < len(items) {
-		app.state.selectedClass = items[cursor-1]
-		var ct oasf.ClassType
-		switch app.state.activeTab {
-		case tabSkills:
-			ct = oasf.ClassTypeSkill
-		case tabDomains:
-			ct = oasf.ClassTypeDomain
-		case tabModules:
-			ct = oasf.ClassTypeModule
+func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
+	switch app.state.filters.mode {
+	case filterModeList:
+		if app.state.filters.listCursor > 0 {
+			app.state.filters.listCursor--
 		}
-		app.state.selectedClassType = ct
-		go app.fetchOASF(ct, app.state.selectedClass)
+	case filterModeOptions:
+		if app.state.filters.optionsCursor > 0 {
+			app.state.filters.optionsCursor--
+		}
 	}
+	app.renderFiltersView(g)
+	app.autoPreviewFilterOption(g)
+	return nil
+}
 
+func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
+	switch app.state.filters.mode {
+	case filterModeList:
+		rows := app.listRows()
+		if app.state.filters.listCursor < len(rows)-1 {
+			app.state.filters.listCursor++
+		}
+	case filterModeOptions:
+		options := app.optionsFor(app.state.filters.editing)
+		if app.state.filters.optionsCursor < len(options)-1 {
+			app.state.filters.optionsCursor++
+		}
+	}
+	app.renderFiltersView(g)
+	app.autoPreviewFilterOption(g)
+	return nil
+}
+
+// filterEnter dispatches by mode:
+// - list mode: open the options view for the category under the cursor
+// - options mode: toggle the selection under the cursor (same as tab)
+func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
+	switch app.state.filters.mode {
+	case filterModeList:
+		rows := app.listRows()
+		if app.state.filters.listCursor >= len(rows) {
+			return nil
+		}
+		row := rows[app.state.filters.listCursor]
+		app.state.filters.editing = row.category
+		app.state.filters.optionsCursor = 0
+		app.state.filters.mode = filterModeOptions
+		app.renderFiltersView(g)
+		app.autoPreviewFilterOption(g)
+	case filterModeOptions:
+		app.toggleOptionUnderCursor(g)
+	}
+	return nil
+}
+
+// filterTab toggles the option under the cursor when in options mode; in
+// list mode it falls through to global focus cycling so the panel still
+// behaves like every other left-column panel.
+func (app *Gui) filterTab(g *gocui.Gui, v *gocui.View) error {
+	if app.state.filters.mode == filterModeOptions {
+		app.toggleOptionUnderCursor(g)
+		return nil
+	}
+	return app.cycleFocusForward(g, v)
+}
+
+// filterEsc returns from options mode back to the filter list. In list mode
+// it does nothing — there is no "clear all filters" gesture (intentional;
+// users remove filters by toggling them off in the options view).
+func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
+	if app.state.filters.mode == filterModeOptions {
+		app.state.filters.mode = filterModeList
+		// Place the list cursor on the row of the category we just left so
+		// returning to its options is one keystroke away.
+		app.state.filters.listCursor = app.listCursorForCategory(app.state.filters.editing)
+		app.renderFiltersView(g)
+	}
+	return nil
+}
+
+// toggleOptionUnderCursor flips selection of the option highlighted in the
+// options view, then refreshes both the panel and the records list.
+func (app *Gui) toggleOptionUnderCursor(g *gocui.Gui) {
+	cat := app.state.filters.editing
+	options := app.optionsFor(cat)
+	if app.state.filters.optionsCursor >= len(options) {
+		return
+	}
+	app.toggleApplied(cat, options[app.state.filters.optionsCursor])
 	app.state.recordCursor = 0
 	app.applyFilters()
+	app.renderFiltersView(g)
 	app.renderRecordsView(g)
-	return nil
 }
 
-func (app *Gui) classClearFilter(g *gocui.Gui, v *gocui.View) error {
-	app.state.selectedClass = ""
-	app.state.classCursor = 0
-	app.state.recordCursor = 0
-	app.applyFilters()
-	app.renderClassesView(g)
-	app.renderRecordsView(g)
-	return nil
-}
-
-func (app *Gui) classNextTab(g *gocui.Gui, v *gocui.View) error {
-	app.state.activeTab = classTab((int(app.state.activeTab) + 1) % 3)
-	app.state.classCursor = 0
-	app.renderClassesView(g)
-	return nil
-}
-
-func (app *Gui) classPrevTab(g *gocui.Gui, v *gocui.View) error {
-	app.state.activeTab = classTab((int(app.state.activeTab) + 2) % 3)
-	app.state.classCursor = 0
-	app.renderClassesView(g)
-	return nil
+// listCursorForCategory returns the row index of the supplied category in
+// the expanded list view.
+func (app *Gui) listCursorForCategory(c filterCategory) int {
+	rows := app.listRows()
+	for i, r := range rows {
+		if r.category == c && r.option == "" {
+			return i
+		}
+	}
+	return 0
 }
 
 // ── Records panel handlers ────────────────────────────────────────────────────
@@ -451,7 +486,7 @@ func (app *Gui) openOASFDialog(g *gocui.Gui, v *gocui.View) error {
 				app.state.oasfClient = client
 				app.state.oasfAddr = addr
 				app.renderDirectory(g)
-				app.autoPreviewClass(g)
+				app.autoPreviewFilterOption(g)
 				return nil
 			})
 		},
@@ -511,13 +546,6 @@ func (app *Gui) fetchOASF(ct oasf.ClassType, name string) {
 	})
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // autoPreviewRecord fires a background pull for the record currently under the
 // cursor, resetting the preview scroll position first.
 func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
@@ -535,25 +563,29 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 	go app.pullRecord(cid)
 }
 
-// autoPreviewClass shows the OASF description for the class currently under
-// the cursor, or clears the preview when "(All)" is selected.
-func (app *Gui) autoPreviewClass(g *gocui.Gui) {
-	items := app.currentClassItems()
-	cursor := app.state.classCursor
-	if cursor == 0 || cursor-1 >= len(items) {
-		app.renderPreviewText(g, "", "")
+// autoPreviewFilterOption shows the OASF description for the currently
+// highlighted skill/domain/module option in the filters panel.
+func (app *Gui) autoPreviewFilterOption(g *gocui.Gui) {
+	if app.state.filters.mode != filterModeOptions {
 		return
 	}
-	name := items[cursor-1]
+	cat := app.state.filters.editing
 	var ct oasf.ClassType
-	switch app.state.activeTab {
-	case tabSkills:
+	switch cat {
+	case filterSkills:
 		ct = oasf.ClassTypeSkill
-	case tabDomains:
+	case filterDomains:
 		ct = oasf.ClassTypeDomain
-	case tabModules:
+	case filterModules:
 		ct = oasf.ClassTypeModule
+	default:
+		return
 	}
+	options := app.optionsFor(cat)
+	if app.state.filters.optionsCursor >= len(options) {
+		return
+	}
+	name := options[app.state.filters.optionsCursor]
 	if pv, err := g.View(viewPreview); err == nil {
 		_ = pv.SetOrigin(0, 0)
 	}

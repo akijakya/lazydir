@@ -11,27 +11,6 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
-// classTab represents which taxonomy tab is active in the classes panel.
-type classTab int
-
-const (
-	tabSkills  classTab = 0
-	tabDomains classTab = 1
-	tabModules classTab = 2
-)
-
-func (t classTab) String() string {
-	switch t {
-	case tabSkills:
-		return "Skills"
-	case tabDomains:
-		return "Domains"
-	case tabModules:
-		return "Modules"
-	}
-	return ""
-}
-
 // appState holds all mutable application state, protected by a mutex so that
 // goroutines spawned for async work can safely call g.Update().
 type appState struct {
@@ -50,30 +29,25 @@ type appState struct {
 
 	// full record list
 	allRecords []*dirclient.RecordSummary
-	// records after class + name filter
+	// records after applied filters + name query
 	filteredRecords []*dirclient.RecordSummary
 	recordCursor    int
 
-	// taxonomy
-	skills  []string
-	domains []string
-	modules []string
+	// distinct values usable as filter options for each category
+	filterValues dirclient.FilterValues
 
-	activeTab   classTab
-	classCursor int
-	// name of the currently selected class (empty = all)
-	selectedClass     string
-	selectedClassType oasf.ClassType
+	// [2] Filters panel state
+	filters filterState
 
 	// name filter (active query; empty means no filter)
 	filterQuery string
 
 	// input prompt state
-	inputVisible    bool
-	inputTitle      string
-	prevView        string            // view to return focus to on dismiss
-	onInputConfirm  func(string)      // called with TextArea content on enter
-	onInputCancel   func()            // called on esc
+	inputVisible   bool
+	inputTitle     string
+	prevView       string       // view to return focus to on dismiss
+	onInputConfirm func(string) // called with TextArea content on enter
+	onInputCancel  func()       // called on esc
 
 	// help popup state
 	helpPrevView string // view to return to when help closes
@@ -106,6 +80,7 @@ func New(cfg Config) error {
 			authMode:   cfg.Directory.AuthMode,
 			oasfAddr:   cfg.OASF.ServerAddress,
 			oasfClient: oasfClient,
+			filters:    newFilterState(),
 		},
 	}
 
@@ -184,31 +159,28 @@ func (app *Gui) loadRecords(c *dirclient.Client) {
 
 	app.g.Update(func(g *gocui.Gui) error {
 		app.state.allRecords = summaries
-		skills, domains, modules := dirclient.ExtractClasses(summaries)
-		app.state.skills = skills
-		app.state.domains = domains
-		app.state.modules = modules
-		app.state.selectedClass = ""
+		app.state.filterValues = dirclient.ExtractFilterValues(summaries)
+		app.state.filters = newFilterState()
 		app.state.filterQuery = ""
 		app.state.recordCursor = 0
-		app.state.classCursor = 0
 		app.applyFilters()
-		app.renderClassesView(g)
+		app.renderFiltersView(g)
 		app.renderRecordsView(g)
 		app.autoPreviewRecord(g)
 		return nil
 	})
 }
 
-// applyFilters rebuilds filteredRecords based on selected class and name query.
+// applyFilters rebuilds filteredRecords by intersecting the active [2] Filters
+// selections with the name query.
 // Must be called while holding state.mu OR from a g.Update callback (single-threaded).
 func (app *Gui) applyFilters() {
 	var base []*dirclient.RecordSummary
-	if app.state.selectedClass == "" {
+	if len(app.state.filters.applied) == 0 {
 		base = app.state.allRecords
 	} else {
 		for _, r := range app.state.allRecords {
-			if recordMatchesClass(r, app.state.selectedClassType, app.state.selectedClass) {
+			if app.recordMatchesFilters(r) {
 				base = append(base, r)
 			}
 		}
@@ -227,30 +199,6 @@ func (app *Gui) applyFilters() {
 		}
 	}
 	app.state.filteredRecords = out
-}
-
-func recordMatchesClass(r *dirclient.RecordSummary, ct oasf.ClassType, name string) bool {
-	switch ct {
-	case oasf.ClassTypeSkill:
-		for _, s := range r.Skills {
-			if s == name {
-				return true
-			}
-		}
-	case oasf.ClassTypeDomain:
-		for _, d := range r.Domains {
-			if d == name {
-				return true
-			}
-		}
-	case oasf.ClassTypeModule:
-		for _, m := range r.Modules {
-			if m == name {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,
@@ -298,15 +246,3 @@ func (app *Gui) closeInput() {
 	_ = app.focusTo(app.g, target)
 }
 
-// currentClassItems returns the items for the active taxonomy tab.
-func (app *Gui) currentClassItems() []string {
-	switch app.state.activeTab {
-	case tabSkills:
-		return app.state.skills
-	case tabDomains:
-		return app.state.domains
-	case tabModules:
-		return app.state.modules
-	}
-	return nil
-}

@@ -8,7 +8,7 @@ import (
 
 const (
 	viewDirectory = "directory"
-	viewClasses   = "classes"
+	viewFilters   = "filters"
 	viewRecords   = "records"
 	viewPreview   = "preview"
 	viewOptions   = "options" // bottom-left: context keybindings (like lazygit)
@@ -21,7 +21,7 @@ const (
 var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 
 // listViews are the panels that show a highlighted cursor row.
-var listViews = []string{viewClasses, viewRecords}
+var listViews = []string{viewFilters, viewRecords}
 
 // layout is the gocui Manager — called on every redraw/resize.
 func (g *Gui) layout(gui *gocui.Gui) error {
@@ -61,26 +61,26 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	showInput := g.state.inputVisible
 
 	var (
-		dirY0, dirY1       = 0, dirH - 1
-		classY0, classY1   = dirH, 0
-		recordY0           = 0
-		inputOnLeft        = false
-		inputX0, inputY0   = 0, 0
-		inputX1, inputY1   = 0, 0
+		dirY0, dirY1         = 0, dirH - 1
+		filtersY0, filtersY1 = dirH, 0
+		recordY0             = 0
+		inputOnLeft          = false
+		inputX0, inputY0     = 0, 0
+		inputX1, inputY1     = 0, 0
 	)
 
 	// Reserve the prompt slot before deciding panel heights.
-	slotOffsetDir := 0    // shift applied to Connections (only when host=viewDirectory)
-	slotOffsetClass := 0  // shift applied to Classes
-	slotOffsetRecord := 0 // shift applied to Records
+	slotOffsetDir := 0     // shift applied to Connections (only when host=viewDirectory)
+	slotOffsetFilters := 0 // shift applied to Filters
+	slotOffsetRecord := 0  // shift applied to Records
 	if showInput {
 		switch inputHost {
 		case viewDirectory:
 			slotOffsetDir = inputSlot
-			slotOffsetClass = inputSlot
+			slotOffsetFilters = inputSlot
 			slotOffsetRecord = inputSlot
-		case viewClasses:
-			slotOffsetClass = inputSlot
+		case viewFilters:
+			slotOffsetFilters = inputSlot
 			slotOffsetRecord = inputSlot
 		case viewRecords, viewPreview, "":
 			// Default: above Records (used by `/` filter too).
@@ -93,16 +93,16 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	dirY0 += slotOffsetDir
 	dirY1 += slotOffsetDir
 
-	// Classes panel: vertical space left between Connections and Records.
-	classY0 = dirY1 + 1 + (slotOffsetClass - slotOffsetDir)
-	classH := (panelBottom - dirY1 - 1 - slotOffsetClass + slotOffsetDir) / 2
-	if classH < 3 {
-		classH = 3
+	// Filters panel: vertical space left between Connections and Records.
+	filtersY0 = dirY1 + 1 + (slotOffsetFilters - slotOffsetDir)
+	filtersH := (panelBottom - dirY1 - 1 - slotOffsetFilters + slotOffsetDir) / 2
+	if filtersH < 3 {
+		filtersH = 3
 	}
-	classY1 = classY0 + classH - 1
+	filtersY1 = filtersY0 + filtersH - 1
 
-	// Records panel starts right after Classes, plus any extra slot above it.
-	recordY0 = classY1 + 1 + (slotOffsetRecord - slotOffsetClass)
+	// Records panel starts right after Filters, plus any extra slot above it.
+	recordY0 = filtersY1 + 1 + (slotOffsetRecord - slotOffsetFilters)
 	if recordY0 >= panelBottom {
 		recordY0 = panelBottom - 3
 	}
@@ -114,10 +114,10 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		switch inputHost {
 		case viewDirectory:
 			inputY0 = 0
-		case viewClasses:
+		case viewFilters:
 			inputY0 = dirY1 + 1
 		default:
-			inputY0 = classY1 + 1
+			inputY0 = filtersY1 + 1
 		}
 		inputY1 = inputY0 + inputSlot - 1
 	}
@@ -135,12 +135,12 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		g.renderDirectory(gui)
 	}
 
-	// [2] Classes panel
-	if v, err := gui.SetView(viewClasses, 0, classY0, leftW-1, classY1, 0); err != nil {
+	// [2] Filters panel
+	if v, err := gui.SetView(viewFilters, 0, filtersY0, leftW-1, filtersY1, 0); err != nil {
 		if !gocui.IsUnknownView(err) {
 			return err
 		}
-		v.Title = "[2] Classes"
+		v.Title = "[2] Filters"
 		v.Frame = true
 		v.Highlight = false
 		v.SelBgColor = gocui.Get256Color(8)
@@ -288,7 +288,7 @@ func (g *Gui) infoText() string {
 func (g *Gui) inputHostView() string {
 	host := g.state.prevView
 	switch host {
-	case viewDirectory, viewClasses, viewRecords:
+	case viewDirectory, viewFilters, viewRecords:
 		return host
 	default:
 		return viewRecords

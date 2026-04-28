@@ -114,10 +114,11 @@ Key Bindings (inside the TUI):
   tab / shift+tab    Cycle panel focus
   1 / 2 / 3 / 0      Jump to panel
   ↑ ↓ / j k          Navigate list items
-  enter              Select item
+  enter              Open filter category / toggle option / preview record
+  tab (in Filters)   Toggle option in the options view
+  esc (in Filters)   Return from options view to filter list
   /                  Filter records by name
-  esc                Clear filter / dismiss dialog
-  h / l              Switch Classes tab (Skills / Domains / Modules)
+  esc (in Records)   Clear name filter
   c                  Open connect dialog (Connections panel → Directory)
   o                  Open connect dialog (Connections panel → OASF server)
   r                  Refresh records

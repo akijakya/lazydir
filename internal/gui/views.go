@@ -3,7 +3,6 @@ package gui
 import (
 	"bytes"
 	"fmt"
-	"strings"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -31,41 +30,85 @@ var lazydirStyle = func() *chroma.Style {
 	return s
 }()
 
-// renderClassesView redraws the [2] Classes panel.
-func (app *Gui) renderClassesView(g *gocui.Gui) {
-	v, err := g.View(viewClasses)
+// renderFiltersView redraws the [2] Filters panel in either list or options
+// mode. It also updates the panel title to reflect the current mode.
+func (app *Gui) renderFiltersView(g *gocui.Gui) {
+	v, err := g.View(viewFilters)
 	if err != nil {
 		return
 	}
 	v.Clear()
 
-	items := app.currentClassItems()
+	if app.state.filters.mode == filterModeOptions {
+		app.renderFiltersOptions(g, v)
+		return
+	}
+	app.renderFiltersList(g, v)
+}
 
-	// Tab bar
-	tabs := []classTab{tabSkills, tabDomains, tabModules}
-	var tabLabels []string
-	for _, t := range tabs {
-		label := t.String()
-		if t == app.state.activeTab {
-			label = "[" + label + "]"
+// renderFiltersList draws the default mode: each filter category as a row,
+// with any applied selections rendered as indented child rows.
+func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
+	v.Title = "[2] Filters"
+
+	rows := app.listRows()
+	for _, r := range rows {
+		if r.option == "" {
+			fmt.Fprintln(v, " "+r.category.title())
+			continue
 		}
-		tabLabels = append(tabLabels, label)
-	}
-	fmt.Fprintln(v, " "+strings.Join(tabLabels, "  "))
-	fmt.Fprintln(v, strings.Repeat("─", 30))
-
-	// "(All)" entry at cursor index 0
-	allLabel := " (All)"
-	fmt.Fprintln(v, allLabel)
-
-	for _, item := range items {
-		fmt.Fprintln(v, " "+item)
+		fmt.Fprintln(v, "    "+r.option)
 	}
 
-	// Position the view cursor to match state.
-	// +2 for the tab bar + separator line, +1 for (All) = offset 0 maps to line 2
+	// Clamp cursor to valid range and render position.
+	if app.state.filters.listCursor < 0 {
+		app.state.filters.listCursor = 0
+	}
+	if max := len(rows) - 1; max >= 0 && app.state.filters.listCursor > max {
+		app.state.filters.listCursor = max
+	}
+
 	_ = v.SetOrigin(0, 0)
-	targetLine := app.state.classCursor + 2 // +2 for tab bar + separator
+	targetLine := app.state.filters.listCursor
+	_, viewH := v.Size()
+	if targetLine >= viewH {
+		_ = v.SetOrigin(0, targetLine-viewH+1)
+		_ = v.SetCursor(0, viewH-1)
+	} else {
+		_ = v.SetCursor(0, targetLine)
+	}
+}
+
+// renderFiltersOptions draws the options sub-view for the category currently
+// being edited, with checkmarks next to selected items.
+func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
+	cat := app.state.filters.editing
+	v.Title = "[2] Filters — " + cat.title()
+
+	options := app.optionsFor(cat)
+	applied := app.state.filters.applied[cat]
+
+	if len(options) == 0 {
+		fmt.Fprintln(v, " (no options available)")
+	}
+
+	for _, opt := range options {
+		mark := "[ ]"
+		if applied[opt] {
+			mark = "[x]"
+		}
+		fmt.Fprintf(v, " %s %s\n", mark, opt)
+	}
+
+	if app.state.filters.optionsCursor < 0 {
+		app.state.filters.optionsCursor = 0
+	}
+	if max := len(options) - 1; max >= 0 && app.state.filters.optionsCursor > max {
+		app.state.filters.optionsCursor = max
+	}
+
+	_ = v.SetOrigin(0, 0)
+	targetLine := app.state.filters.optionsCursor
 	_, viewH := v.Size()
 	if targetLine >= viewH {
 		_ = v.SetOrigin(0, targetLine-viewH+1)

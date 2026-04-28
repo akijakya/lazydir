@@ -36,13 +36,13 @@ var perPanelBindings = map[string]panelBindings{
 			{"o", "connect to OASF server", true},
 		},
 	},
-	viewClasses: {
-		title: "[2] Classes",
+	viewFilters: {
+		title: "[2] Filters",
 		bindings: []binding{
 			{"↑↓ / j k", "navigate", true},
-			{"enter", "select / filter records", true},
-			{"h / l", "switch tab", true},
-			{"esc", "clear selection", false},
+			{"enter", "open / toggle option", true},
+			{"tab", "toggle option (options view)", true},
+			{"esc", "back to filter list", true},
 			{"wheel", "scroll", false},
 		},
 	},

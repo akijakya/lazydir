@@ -12,18 +12,23 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 │  ● Directory: localh…  │                                              │
 │  ● OASF: schema.oasf…  │  Shows either:                               │
 ├────────────────────────│  • OASF skill / domain / module description  │
-│ [2] Classes            │  • Full record JSON (syntax highlighted)     │
-│  Skills │ Domains │ Mod│                                              │
-│  > natural_language…   │                                              │
-│    text_to_code        │                                              │
-│    …                   │                                              │
+│ [2] Filters            │  • Full record JSON (syntax highlighted)     │
+│  > Skills              │                                              │
+│      natural_language… │                                              │
+│    Domains             │                                              │
+│    Modules             │                                              │
+│    OASF version        │                                              │
+│    Version             │                                              │
+│    Author              │                                              │
+│    Trusted             │                                              │
+│    Verified            │                                              │
 ├────────────────────────│                                              │
 │ [3] Records  /filter   │                                              │
 │  > cisco.com/agent  v1 │                                              │
 │    example.com/bot  v2 │                                              │
 │    …                   │                                              │
 └────────────────────────┴──────────────────────────────────────────────┘
-  navigate: ↑↓  focus: tab  filter: /  connect dir: c  connect oasf: o
+  navigate: ↑↓  focus: tab  filter records: /  open filter: enter
 ```
 
 ### Panel descriptions
@@ -31,9 +36,9 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 | Panel | Purpose |
 |-------|---------|
 | **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
-| **[2] Classes** | Displays taxonomy classes (Skills, Domains, Modules) aggregated from all records. Use `tab` to switch between the three tabs. Moving the cursor onto a class fetches its OASF description via the `oasf-sdk` and displays it in the preview panel; pressing `enter` additionally filters the records list. |
-| **[3] Records** | Lists all records (or a filtered subset when a class is selected). Shows name and version. Use `/` to filter by name. Press `enter` to load the full record JSON in the preview panel. |
-| **Preview** | The right two-thirds of the screen. Displays either an OASF class description (plain text) or syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
+| **[2] Filters** | Lists every filter category (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Pressing `enter` on a category opens its options view, where the values present in the loaded record set are listed; `tab` (or `enter`) toggles selection — multiple values can be active per category. `esc` returns from the options view to the filter list. Active selections appear as indented child rows under their category in the list view, and the `[3] Records` pane updates immediately as filters change. |
+| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Use `/` to further filter by name. Press `enter` to load the full record JSON in the preview panel. |
+| **Preview** | The right two-thirds of the screen. Displays either an OASF class description (plain text, when navigating skill/domain/module options) or syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
 
 ## Prerequisites
 
@@ -128,15 +133,18 @@ lazydir -s my-dir.example.com:443 \
 | `q` / `ctrl+c` | Quit |
 | `tab` / `shift+tab` | Cycle panel focus |
 | `1` | Focus the Connections panel |
-| `2` | Focus the Classes panel |
+| `2` | Focus the Filters panel |
 | `3` | Focus the Records panel |
 | `0` | Focus the Preview panel |
 | `↑` / `k` | Move cursor up |
 | `↓` / `j` | Move cursor down |
-| `enter` | Select item (preview record / filter by class) |
-| `esc` | Clear filter / dismiss dialog |
-| `/` | Start name filter (Records panel) |
-| `tab` (Classes panel) | Switch between Skills / Domains / Modules tabs |
+| `enter` (Filters list) | Open the options view for the selected category |
+| `enter` (Filters options) | Toggle the option under the cursor |
+| `tab` (Filters options) | Toggle the option under the cursor (multi-select) |
+| `esc` (Filters options) | Return to the filter list |
+| `enter` (Records) | Load the full record JSON in the preview panel |
+| `/` (Records) | Start name filter |
+| `esc` (Records) | Clear name filter |
 | `c` (Connections panel) | Open Directory connect dialog |
 | `o` (Connections panel) | Open OASF server connect dialog |
 | `r` | Refresh records from server |
