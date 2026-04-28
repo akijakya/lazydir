@@ -6,6 +6,63 @@ import (
 	"github.com/akijakya/lazydir/internal/dirclient"
 )
 
+// filterValueAggregator collects the unique values seen in the streamed
+// records for each filter category. Values become available in the [2]
+// Filters options view as soon as a record carrying them arrives.
+type filterValueAggregator struct {
+	skills        map[string]bool
+	domains       map[string]bool
+	modules       map[string]bool
+	versions      map[string]bool
+	schemaVersion map[string]bool
+	authors       map[string]bool
+}
+
+func newFilterValueAggregator() *filterValueAggregator {
+	return &filterValueAggregator{
+		skills:        map[string]bool{},
+		domains:       map[string]bool{},
+		modules:       map[string]bool{},
+		versions:      map[string]bool{},
+		schemaVersion: map[string]bool{},
+		authors:       map[string]bool{},
+	}
+}
+
+// add folds one record's filterable fields into the aggregator.
+func (a *filterValueAggregator) add(r *dirclient.RecordSummary) {
+	for _, v := range r.Skills {
+		a.skills[v] = true
+	}
+	for _, v := range r.Domains {
+		a.domains[v] = true
+	}
+	for _, v := range r.Modules {
+		a.modules[v] = true
+	}
+	for _, v := range r.Authors {
+		if v != "" {
+			a.authors[v] = true
+		}
+	}
+	if r.SchemaVersion != "" {
+		a.schemaVersion[r.SchemaVersion] = true
+	}
+	if r.Version != "" {
+		a.versions[r.Version] = true
+	}
+}
+
+// sorted returns the alphabetically sorted values of m.
+func sortedSet(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // filterCategory identifies a filterable record field shown in the [2] Filters
 // panel. The list is presented in this order.
 type filterCategory int
@@ -97,22 +154,27 @@ func newFilterState() filterState {
 }
 
 // optionsFor returns the option labels available for a given category, given
-// the current record set. The returned slice is alphabetically sorted (or in
-// natural order for booleans).
+// the records seen on the unfiltered stream so far. Booleans (Trusted /
+// Verified) always offer the same fixed yes/no choices regardless of what
+// has been streamed.
 func (app *Gui) optionsFor(c filterCategory) []string {
+	a := app.state.filterValues
+	if a == nil {
+		return nil
+	}
 	switch c {
 	case filterSkills:
-		return app.state.filterValues.Skills
+		return sortedSet(a.skills)
 	case filterDomains:
-		return app.state.filterValues.Domains
+		return sortedSet(a.domains)
 	case filterModules:
-		return app.state.filterValues.Modules
+		return sortedSet(a.modules)
 	case filterOASFVersion:
-		return app.state.filterValues.OASFVersions
+		return sortedSet(a.schemaVersion)
 	case filterVersion:
-		return app.state.filterValues.Versions
+		return sortedSet(a.versions)
 	case filterAuthor:
-		return app.state.filterValues.Authors
+		return sortedSet(a.authors)
 	case filterTrusted, filterVerified:
 		return []string{"yes", "no"}
 	}
@@ -171,62 +233,64 @@ func (app *Gui) listRows() []listRow {
 	return rows
 }
 
-// recordMatchesFilters returns true if the supplied record satisfies every
-// active filter category. Each non-empty category contributes an OR over its
-// selected options, and categories AND together.
-func (app *Gui) recordMatchesFilters(r *dirclient.RecordSummary) bool {
-	for c, set := range app.state.filters.applied {
+// activeQueries flattens the applied filter selections into the slice of
+// server-side queries that the directory understands. Yes/no booleans are
+// only emitted when exactly one side is selected — picking both, or neither,
+// means "no filter" and we omit the query entirely.
+func (app *Gui) activeQueries() []dirclient.Query {
+	var qs []dirclient.Query
+	for _, c := range allFilterCategories {
+		set := app.state.filters.applied[c]
 		if len(set) == 0 {
 			continue
 		}
-		if !recordMatchesCategory(r, c, set) {
-			return false
+		if c.boolean() {
+			yes := set["yes"]
+			no := set["no"]
+			if yes == no {
+				continue
+			}
+			qs = append(qs, dirclient.Query{
+				Category: categoryToFilter(c),
+				Value:    boolValue(yes),
+			})
+			continue
+		}
+		for v := range set {
+			qs = append(qs, dirclient.Query{
+				Category: categoryToFilter(c),
+				Value:    v,
+			})
 		}
 	}
-	return true
+	return qs
 }
 
-func recordMatchesCategory(r *dirclient.RecordSummary, c filterCategory, set map[string]bool) bool {
+func categoryToFilter(c filterCategory) dirclient.FilterCategory {
 	switch c {
 	case filterSkills:
-		return anyIn(r.Skills, set)
+		return dirclient.FilterSkill
 	case filterDomains:
-		return anyIn(r.Domains, set)
+		return dirclient.FilterDomain
 	case filterModules:
-		return anyIn(r.Modules, set)
+		return dirclient.FilterModule
 	case filterOASFVersion:
-		return set[r.SchemaVersion]
+		return dirclient.FilterSchemaVersion
 	case filterVersion:
-		return set[r.Version]
+		return dirclient.FilterVersion
 	case filterAuthor:
-		return anyIn(r.Authors, set)
-	case filterTrusted, filterVerified:
-		// For lack of a server-side trust attestation cached locally, both
-		// options use the same "has signature" proxy. They behave identically
-		// today; keeping them distinct preserves the intent so a future server
-		// integration can refine each independently without UX changes.
-		want := ""
-		switch {
-		case set["yes"] && !set["no"]:
-			want = "yes"
-		case set["no"] && !set["yes"]:
-			want = "no"
-		default:
-			return true // both selected (or neither — treat as no filter)
-		}
-		if want == "yes" {
-			return r.Signed
-		}
-		return !r.Signed
+		return dirclient.FilterAuthor
+	case filterTrusted:
+		return dirclient.FilterTrusted
+	case filterVerified:
+		return dirclient.FilterVerified
 	}
-	return true
+	return dirclient.FilterSkill
 }
 
-func anyIn(values []string, set map[string]bool) bool {
-	for _, v := range values {
-		if set[v] {
-			return true
-		}
+func boolValue(yes bool) string {
+	if yes {
+		return "true"
 	}
-	return false
+	return "false"
 }

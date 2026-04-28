@@ -83,7 +83,13 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 // being edited, with checkmarks next to selected items.
 func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 	cat := app.state.filters.editing
-	v.Title = "[2] Filters — " + cat.title()
+	title := "[2] Filters — " + cat.title()
+	// While the records stream is still in flight, the option list grows;
+	// surface that so the user doesn't think the missing values are absent.
+	if !cat.boolean() && (app.state.stream == streamLoading || app.state.stream == streamStreaming) {
+		title += " (still loading…)"
+	}
+	v.Title = title
 
 	options := app.optionsFor(cat)
 	applied := app.state.filters.applied[cat]
@@ -127,14 +133,28 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	v.Clear()
 
 	records := app.state.filteredRecords
-	total := len(app.state.allRecords)
+	total := len(app.state.records)
 
-	// Header line: count + filter indicator
+	// Header line: count + stream state + name filter indicator
+	count := fmt.Sprintf("%d/%d", len(records), total)
+	if app.state.filterQuery == "" {
+		// No name query active: collapse the redundant N/N to a single number.
+		count = fmt.Sprintf("%d", total)
+	}
+	state := ""
+	switch app.state.stream {
+	case streamLoading:
+		state = " loading…"
+	case streamStreaming:
+		state = " streaming…"
+	case streamErrored:
+		state = " error: " + app.state.streamErr
+	}
 	filterInfo := ""
 	if app.state.filterQuery != "" {
 		filterInfo = fmt.Sprintf("  filter: %s", app.state.filterQuery)
 	}
-	fmt.Fprintf(v, " (%d/%d)%s\n", len(records), total, filterInfo)
+	fmt.Fprintf(v, " (%s)%s%s\n", count, state, filterInfo)
 
 	viewW, _ := v.Size()
 	nameW := viewW - 14

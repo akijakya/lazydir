@@ -329,7 +329,8 @@ func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 }
 
 // toggleOptionUnderCursor flips selection of the option highlighted in the
-// options view, then refreshes both the panel and the records list.
+// options view, then re-issues the SearchRecords stream with the updated
+// filter set so the [3] Records pane reflects it.
 func (app *Gui) toggleOptionUnderCursor(g *gocui.Gui) {
 	cat := app.state.filters.editing
 	options := app.optionsFor(cat)
@@ -337,10 +338,8 @@ func (app *Gui) toggleOptionUnderCursor(g *gocui.Gui) {
 		return
 	}
 	app.toggleApplied(cat, options[app.state.filters.optionsCursor])
-	app.state.recordCursor = 0
-	app.applyFilters()
+	app.startRecordsStream()
 	app.renderFiltersView(g)
-	app.renderRecordsView(g)
 }
 
 // listCursorForCategory returns the row index of the supplied category in
@@ -391,10 +390,10 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 	app.openInput("Filter records (/)", app.state.filterQuery,
 		func(value string) {
-			app.state.filterQuery = value
-			app.state.recordCursor = 0
-			app.applyFilters()
 			app.g.Update(func(g *gocui.Gui) error {
+				app.state.filterQuery = value
+				app.state.recordCursor = 0
+				app.applyNameFilter()
 				app.renderRecordsView(g)
 				return nil
 			})
@@ -407,7 +406,7 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 	app.state.filterQuery = ""
 	app.state.recordCursor = 0
-	app.applyFilters()
+	app.applyNameFilter()
 	app.renderRecordsView(g)
 	return nil
 }
@@ -501,7 +500,7 @@ func (app *Gui) refresh(g *gocui.Gui, v *gocui.View) error {
 	if app.state.client == nil {
 		return nil
 	}
-	go app.loadRecords(app.state.client)
+	app.startRecordsStream()
 	return nil
 }
 

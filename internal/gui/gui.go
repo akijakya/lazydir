@@ -11,6 +11,17 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
+// streamState describes the lifecycle phase of the records stream.
+type streamState int
+
+const (
+	streamIdle      streamState = iota // no client yet, or no stream issued
+	streamLoading                      // first page hasn't arrived yet
+	streamStreaming                    // first page rendered, still receiving the rest
+	streamDone                         // stream finished cleanly
+	streamErrored                      // stream finished with an error
+)
+
 // appState holds all mutable application state, protected by a mutex so that
 // goroutines spawned for async work can safely call g.Update().
 type appState struct {
@@ -20,21 +31,27 @@ type appState struct {
 	serverAddr string
 	authMode   string
 	connected  bool
-	loading    bool
 	client     *dirclient.Client
 
 	// OASF connection
 	oasfAddr   string
 	oasfClient *oasf.Client
 
-	// full record list
-	allRecords []*dirclient.RecordSummary
-	// records after applied filters + name query
+	// records: server already filtered them; we render this slice directly
+	// (after the optional name query in filterQuery is applied).
+	records         []*dirclient.RecordSummary
 	filteredRecords []*dirclient.RecordSummary
 	recordCursor    int
 
-	// distinct values usable as filter options for each category
-	filterValues dirclient.FilterValues
+	// records-stream lifecycle
+	stream     streamState
+	streamErr  string
+	cancelLoad context.CancelFunc
+
+	// distinct values usable as filter options for each category, growing
+	// monotonically across every stream (we never forget an option once
+	// we've seen it, even if the next filtered stream wouldn't include it).
+	filterValues *filterValueAggregator
 
 	// [2] Filters panel state
 	filters filterState
@@ -76,11 +93,12 @@ func New(cfg Config) error {
 	app := &Gui{
 		cfg: cfg,
 		state: appState{
-			serverAddr: cfg.Directory.ServerAddress,
-			authMode:   cfg.Directory.AuthMode,
-			oasfAddr:   cfg.OASF.ServerAddress,
-			oasfClient: oasfClient,
-			filters:    newFilterState(),
+			serverAddr:   cfg.Directory.ServerAddress,
+			authMode:     cfg.Directory.AuthMode,
+			oasfAddr:     cfg.OASF.ServerAddress,
+			oasfClient:   oasfClient,
+			filters:      newFilterState(),
+			filterValues: newFilterValueAggregator(),
 		},
 	}
 
@@ -129,6 +147,10 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		return
 	}
 
+	// Install the client and kick off the initial unfiltered stream in a
+	// single Update callback. Splitting them into two would be racy: the
+	// scheduler may run the second before the first, and startRecordsStream
+	// would then see a nil client and silently no-op.
 	app.g.Update(func(g *gocui.Gui) error {
 		if app.state.client != nil {
 			app.state.client.Close()
@@ -137,63 +159,111 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
 		app.state.connected = true
-		app.renderDirectory(g)
-		app.renderStatus(g)
-		return nil
-	})
-
-	app.loadRecords(c)
-}
-
-// loadRecords fetches all records from the server and populates the panels.
-func (app *Gui) loadRecords(c *dirclient.Client) {
-	ctx := context.Background()
-	summaries, err := c.ListAll(ctx)
-	if err != nil {
-		app.g.Update(func(g *gocui.Gui) error {
-			app.renderPreviewText(g, "Load failed", err.Error())
-			return nil
-		})
-		return
-	}
-
-	app.g.Update(func(g *gocui.Gui) error {
-		app.state.allRecords = summaries
-		app.state.filterValues = dirclient.ExtractFilterValues(summaries)
 		app.state.filters = newFilterState()
 		app.state.filterQuery = ""
-		app.state.recordCursor = 0
-		app.applyFilters()
-		app.renderFiltersView(g)
-		app.renderRecordsView(g)
-		app.autoPreviewRecord(g)
+		app.renderDirectory(g)
+		app.renderStatus(g)
+		app.startRecordsStream()
 		return nil
 	})
 }
 
-// applyFilters rebuilds filteredRecords by intersecting the active [2] Filters
-// selections with the name query.
-// Must be called while holding state.mu OR from a g.Update callback (single-threaded).
-func (app *Gui) applyFilters() {
-	var base []*dirclient.RecordSummary
-	if len(app.state.filters.applied) == 0 {
-		base = app.state.allRecords
-	} else {
-		for _, r := range app.state.allRecords {
-			if app.recordMatchesFilters(r) {
-				base = append(base, r)
-			}
-		}
-	}
-
-	if app.state.filterQuery == "" {
-		app.state.filteredRecords = base
+// startRecordsStream cancels any in-flight records stream and issues a fresh
+// SearchRecords RPC for the current filter selection. It must run on the GUI
+// goroutine (i.e. inside a g.Update callback or a key handler) because it
+// touches state without taking state.mu.
+func (app *Gui) startRecordsStream() {
+	if app.state.client == nil {
 		return
 	}
 
+	if app.state.cancelLoad != nil {
+		app.state.cancelLoad()
+		app.state.cancelLoad = nil
+	}
+
+	app.state.records = nil
+	app.state.recordCursor = 0
+	app.state.streamErr = ""
+	app.state.stream = streamLoading
+	app.applyNameFilter()
+	app.renderRecordsView(app.g)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app.state.cancelLoad = cancel
+
+	queries := app.activeQueries()
+	client := app.state.client
+
+	go client.Stream(ctx, queries, dirclient.StreamCallbacks{
+		OnFirstPage: func(summaries []*dirclient.RecordSummary) {
+			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				app.state.records = append(app.state.records, summaries...)
+				for _, r := range summaries {
+					app.state.filterValues.add(r)
+				}
+				app.state.stream = streamStreaming
+				app.applyNameFilter()
+				app.renderRecordsView(g)
+				app.renderFiltersView(g)
+				app.autoPreviewRecord(g)
+				return nil
+			})
+		},
+		OnBatch: func(batch []*dirclient.RecordSummary) {
+			app.g.Update(func(g *gocui.Gui) error {
+				if ctx.Err() != nil {
+					return nil
+				}
+				app.state.records = append(app.state.records, batch...)
+				for _, r := range batch {
+					app.state.filterValues.add(r)
+				}
+				app.applyNameFilter()
+				app.renderRecordsView(g)
+				app.renderFiltersView(g)
+				return nil
+			})
+		},
+		OnDone: func(err error) {
+			app.g.Update(func(g *gocui.Gui) error {
+				// A cancelled context means we were superseded by a newer
+				// stream; the new one will render the next state, ours has
+				// nothing more to say.
+				if ctx.Err() != nil {
+					return nil
+				}
+				if err != nil {
+					app.state.stream = streamErrored
+					app.state.streamErr = err.Error()
+					app.renderPreviewText(g, "Stream error", err.Error())
+				} else {
+					app.state.stream = streamDone
+				}
+				app.renderRecordsView(g)
+				return nil
+			})
+		},
+	})
+}
+
+// applyNameFilter recomputes filteredRecords from records by applying only
+// the local name query. Server-side filters have already been applied to
+// records by the time they reach us; the name query is intentionally local
+// so the user can narrow incrementally without restarting the stream.
+//
+// Must be called from the GUI goroutine (g.Update callback or key handler).
+func (app *Gui) applyNameFilter() {
+	if app.state.filterQuery == "" {
+		app.state.filteredRecords = app.state.records
+		return
+	}
 	q := strings.ToLower(app.state.filterQuery)
-	var out []*dirclient.RecordSummary
-	for _, r := range base {
+	out := make([]*dirclient.RecordSummary, 0, len(app.state.records))
+	for _, r := range app.state.records {
 		if strings.Contains(strings.ToLower(r.Name), q) {
 			out = append(out, r)
 		}
