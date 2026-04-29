@@ -34,6 +34,29 @@ tasks:
     cmds:
       - "{{.BINARY}} {{.CLI_ARGS}}"
 
+  fmt:
+    desc: Format Go source files
+    cmds:
+      - gofmt -s -w .
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: Run golangci-lint (install via https://golangci-lint.run/welcome/install)
+    cmds:
+      - golangci-lint run ./...
+
+  check:
+    desc: Run all checks (fmt, vet, lint) then build
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: build
+
   default:
     desc: Show available tasks
     cmds:

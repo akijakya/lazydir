@@ -208,11 +208,6 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		nameW = 8
 	}
 
-	infoW := viewW - len(indent1) - 1
-	if infoW < 10 {
-		infoW = 10
-	}
-
 	lineNum := 0
 	targetLine := 0
 	for i, r := range records {
@@ -290,7 +285,6 @@ func previewTitle(subtitle string) string {
 	}
 	return "[0] Preview — " + subtitle
 }
-
 
 // wrapText splits text into lines that fit within maxWidth, breaking on word
 // boundaries where possible. Newlines in the input are preserved.

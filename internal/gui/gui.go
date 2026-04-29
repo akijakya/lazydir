@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/akijakya/lazydir/internal/dirclient"
@@ -23,11 +22,9 @@ const (
 	streamErrored                      // stream finished with an error
 )
 
-// appState holds all mutable application state, protected by a mutex so that
-// goroutines spawned for async work can safely call g.Update().
+// appState holds all mutable application state. Fields are only mutated on
+// the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
-	mu sync.Mutex
-
 	// Directory connection
 	serverAddr string
 	authMode   string
@@ -382,4 +379,3 @@ func (app *Gui) scheduleInputChange() {
 		})
 	})
 }
-

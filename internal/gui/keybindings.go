@@ -606,25 +606,25 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 	)
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("%sCID:%s %s", cyan, reset, info.CID))
+	fmt.Fprintf(&sb, "%sCID:%s %s", cyan, reset, info.CID)
 
 	if len(info.Annotations) > 0 {
-		sb.WriteString(fmt.Sprintf("\n%sAnnotations:%s", yellow, reset))
+		fmt.Fprintf(&sb, "\n%sAnnotations:%s", yellow, reset)
 		keys := make([]string, 0, len(info.Annotations))
 		for k := range info.Annotations {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			sb.WriteString(fmt.Sprintf("\n%s%s%s:%s %s", indent1, yellow, k, reset, info.Annotations[k]))
+			fmt.Fprintf(&sb, "\n%s%s%s:%s %s", indent1, yellow, k, reset, info.Annotations[k])
 		}
 	}
 
 	if info.SchemaVersion != "" {
-		sb.WriteString(fmt.Sprintf("\n%sSchema version:%s %s", green, reset, info.SchemaVersion))
+		fmt.Fprintf(&sb, "\n%sSchema version:%s %s", green, reset, info.SchemaVersion)
 	}
 	if info.CreatedAt != "" {
-		sb.WriteString(fmt.Sprintf("\n%sCreated at:%s %s", magenta, reset, info.CreatedAt))
+		fmt.Fprintf(&sb, "\n%sCreated at:%s %s", magenta, reset, info.CreatedAt)
 	}
 
 	return sb.String()
@@ -739,32 +739,6 @@ func (app *Gui) pullRecord(cid string) {
 			return nil
 		}
 		app.renderPreviewJSON(g, cid, jsonStr)
-		return nil
-	})
-}
-
-func (app *Gui) fetchOASF(ct oasf.ClassType, name string) {
-	client := app.state.oasfClient
-	if client == nil {
-		app.g.Update(func(g *gocui.Gui) error {
-			app.renderPreviewText(g, "OASF not configured",
-				"No OASF server is configured. Press 'o' on the Connections panel to set one.")
-			return nil
-		})
-		return
-	}
-
-	info, err := client.Fetch(context.Background(), ct, name)
-	app.g.Update(func(g *gocui.Gui) error {
-		if err != nil {
-			app.renderPreviewText(g, "Error", err.Error())
-			return nil
-		}
-		title := fmt.Sprintf("%s %s", info.Type, info.Name)
-		if info.Caption != "" {
-			title = fmt.Sprintf("%s %s (%s)", info.Type, info.Name, info.Caption)
-		}
-		app.renderPreviewText(g, title, info.Description)
 		return nil
 	})
 }

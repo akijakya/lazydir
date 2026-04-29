@@ -54,12 +54,13 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	showInput := g.state.inputVisible
 
 	var (
-		dirY0, dirY1         = 0, dirH - 1
-		filtersY0, filtersY1 = dirH, 0
-		recordY0             = 0
-		inputOnLeft          = false
-		inputX0, inputY0     = 0, 0
-		inputX1, inputY1     = 0, 0
+		dirY0, dirY1     = 0, dirH - 1
+		filtersY0        int
+		filtersY1        int
+		recordY0         int
+		inputOnLeft      = false
+		inputX0, inputY0 = 0, 0
+		inputX1, inputY1 = 0, 0
 	)
 
 	// Reserve the prompt slot before deciding panel heights.

@@ -81,6 +81,10 @@ task build        # downloads deps and builds into .bin/lazydir
 | `task build` | Build the binary into `.bin/lazydir` (incremental) |
 | `task run` | Build and immediately start `lazydir` |
 | `task run CLI_ARGS="--server-addr localhost:8888"` | Build and start with custom flags |
+| `task fmt` | Format Go source files (`gofmt -s`) |
+| `task vet` | Run `go vet` |
+| `task lint` | Run `golangci-lint` (must be [installed](https://golangci-lint.run/welcome/install/)) |
+| `task check` | Run fmt + vet + lint + build in one step |
 
 ## Usage
 
