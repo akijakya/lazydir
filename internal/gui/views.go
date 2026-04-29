@@ -3,6 +3,7 @@ package gui
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/formatters"
@@ -94,12 +95,12 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 }
 
 // renderFiltersOptions draws the options sub-view for the category currently
-// being edited, with checkmarks next to selected items.
+// being edited, with checkmarks next to selected items. When an option has
+// its inline description toggled (via 'i'), the description is rendered as
+// indented green lines immediately below the option row.
 func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 	cat := app.state.filters.editing
 	title := "[2] Filters — " + cat.title()
-	// While the records stream is still in flight, the option list grows;
-	// surface that so the user doesn't think the missing values are absent.
 	if !cat.boolean() && (app.state.stream == streamLoading || app.state.stream == streamStreaming) {
 		title += " (still loading…)"
 	}
@@ -107,28 +108,55 @@ func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 
 	options := app.optionsFor(cat)
 	applied := app.state.filters.applied[cat]
+	fs := &app.state.filters
+
+	if fs.optionsCursor < 0 {
+		fs.optionsCursor = 0
+	}
+	if max := len(options) - 1; max >= 0 && fs.optionsCursor > max {
+		fs.optionsCursor = max
+	}
 
 	if len(options) == 0 {
 		fmt.Fprintln(v, " (no options available)")
 	}
 
-	for _, opt := range options {
+	const descIndent = "      "
+	viewW, _ := v.Size()
+	descW := viewW - len(descIndent) - 1
+	if descW < 10 {
+		descW = 10
+	}
+
+	lineNum := 0
+	targetLine := 0
+	for i, opt := range options {
+		if i == fs.optionsCursor {
+			targetLine = lineNum
+		}
+
 		mark := "[ ]"
 		if applied[opt] {
 			mark = "[x]"
 		}
 		fmt.Fprintf(v, " %s %s\n", mark, opt)
-	}
+		lineNum++
 
-	if app.state.filters.optionsCursor < 0 {
-		app.state.filters.optionsCursor = 0
-	}
-	if max := len(options) - 1; max >= 0 && app.state.filters.optionsCursor > max {
-		app.state.filters.optionsCursor = max
+		if opt == fs.inlineDesc {
+			var descLines []string
+			if fs.inlineDescLoading {
+				descLines = []string{"loading…"}
+			} else if fs.inlineDescText != "" {
+				descLines = wrapText(fs.inlineDescText, descW)
+			}
+			for _, dl := range descLines {
+				fmt.Fprintf(v, "%s\033[32m%s\033[0m\n", descIndent, dl)
+				lineNum++
+			}
+		}
 	}
 
 	_ = v.SetOrigin(0, 0)
-	targetLine := app.state.filters.optionsCursor
 	_, viewH := v.Size()
 	if targetLine >= viewH {
 		_ = v.SetOrigin(0, targetLine-viewH+1)
@@ -233,6 +261,36 @@ func previewTitle(subtitle string) string {
 	return "[0] Preview — " + subtitle
 }
 
+
+// wrapText splits text into lines that fit within maxWidth, breaking on word
+// boundaries where possible. Newlines in the input are preserved.
+func wrapText(text string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return strings.Split(text, "\n")
+	}
+	var result []string
+	for _, paragraph := range strings.Split(text, "\n") {
+		if paragraph == "" {
+			result = append(result, "")
+			continue
+		}
+		for len(paragraph) > maxWidth {
+			cut := maxWidth
+			for cut > 0 && paragraph[cut] != ' ' {
+				cut--
+			}
+			if cut == 0 {
+				cut = maxWidth
+			}
+			result = append(result, paragraph[:cut])
+			paragraph = strings.TrimLeft(paragraph[cut:], " ")
+		}
+		if paragraph != "" {
+			result = append(result, paragraph)
+		}
+	}
+	return result
+}
 
 // highlightJSON returns ANSI-colored JSON using chroma with the terminal's
 // own color palette so the output blends with the user's theme.

@@ -81,6 +81,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEsc, gocui.ModNone, app.filterEsc); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, 'i', gocui.ModNone, app.filterToggleInfo); err != nil {
+		return err
+	}
 
 	// ── Records panel ────────────────────────────────────────────────────────
 	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
@@ -259,7 +262,6 @@ func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
 		}
 	}
 	app.renderFiltersView(g)
-	app.autoPreviewFilterOption(g)
 	return nil
 }
 
@@ -277,7 +279,6 @@ func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
 		}
 	}
 	app.renderFiltersView(g)
-	app.autoPreviewFilterOption(g)
 	return nil
 }
 
@@ -294,9 +295,9 @@ func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
 		row := rows[app.state.filters.listCursor]
 		app.state.filters.editing = row.category
 		app.state.filters.optionsCursor = 0
+		app.clearInlineDesc()
 		app.state.filters.mode = filterModeOptions
 		app.renderFiltersView(g)
-		app.autoPreviewFilterOption(g)
 	case filterModeOptions:
 		app.toggleOptionUnderCursor(g)
 	}
@@ -319,9 +320,8 @@ func (app *Gui) filterTab(g *gocui.Gui, v *gocui.View) error {
 // users remove filters by toggling them off in the options view).
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filters.mode == filterModeOptions {
+		app.clearInlineDesc()
 		app.state.filters.mode = filterModeList
-		// Place the list cursor on the row of the category we just left so
-		// returning to its options is one keystroke away.
 		app.state.filters.listCursor = app.listCursorForCategory(app.state.filters.editing)
 		app.renderFiltersView(g)
 	}
@@ -485,7 +485,6 @@ func (app *Gui) openOASFDialog(g *gocui.Gui, v *gocui.View) error {
 				app.state.oasfClient = client
 				app.state.oasfAddr = addr
 				app.renderDirectory(g)
-				app.autoPreviewFilterOption(g)
 				return nil
 			})
 		},
@@ -562,11 +561,11 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 	go app.pullRecord(cid)
 }
 
-// autoPreviewFilterOption shows the OASF description for the currently
-// highlighted skill/domain/module option in the filters panel.
-func (app *Gui) autoPreviewFilterOption(g *gocui.Gui) {
+// filterToggleInfo toggles the inline OASF description for the currently
+// highlighted skill/domain/module in the filter options view.
+func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filters.mode != filterModeOptions {
-		return
+		return nil
 	}
 	cat := app.state.filters.editing
 	var ct oasf.ClassType
@@ -578,17 +577,69 @@ func (app *Gui) autoPreviewFilterOption(g *gocui.Gui) {
 	case filterModules:
 		ct = oasf.ClassTypeModule
 	default:
-		return
+		return nil
 	}
+
 	options := app.optionsFor(cat)
-	if app.state.filters.optionsCursor >= len(options) {
+	fs := &app.state.filters
+	if fs.optionsCursor >= len(options) {
+		return nil
+	}
+	name := options[fs.optionsCursor]
+
+	if fs.inlineDesc == name {
+		app.clearInlineDesc()
+		app.renderFiltersView(g)
+		return nil
+	}
+
+	fs.inlineDesc = name
+	fs.inlineDescText = ""
+	fs.inlineDescLoading = true
+	app.renderFiltersView(g)
+
+	go app.fetchInlineDesc(ct, name)
+	return nil
+}
+
+// fetchInlineDesc fetches the OASF description for name and stores it in
+// the inline description state, triggering a re-render on completion.
+func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
+	client := app.state.oasfClient
+	if client == nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.filters.inlineDesc != name {
+				return nil
+			}
+			app.state.filters.inlineDescLoading = false
+			app.state.filters.inlineDescText = "OASF not configured"
+			app.renderFiltersView(g)
+			return nil
+		})
 		return
 	}
-	name := options[app.state.filters.optionsCursor]
-	if pv, err := g.View(viewPreview); err == nil {
-		_ = pv.SetOrigin(0, 0)
-	}
-	go app.fetchOASF(ct, name)
+
+	info, err := client.Fetch(context.Background(), ct, name)
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.filters.inlineDesc != name {
+			return nil
+		}
+		app.state.filters.inlineDescLoading = false
+		if err != nil {
+			app.state.filters.inlineDescText = err.Error()
+		} else {
+			app.state.filters.inlineDescText = info.Description
+		}
+		app.renderFiltersView(g)
+		return nil
+	})
+}
+
+// clearInlineDesc resets the inline description toggle state.
+func (app *Gui) clearInlineDesc() {
+	app.state.filters.inlineDesc = ""
+	app.state.filters.inlineDescText = ""
+	app.state.filters.inlineDescLoading = false
 }
 
 // ── Help popup ────────────────────────────────────────────────────────────────

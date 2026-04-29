@@ -144,6 +144,11 @@ type filterState struct {
 
 	// applied[category] -> set of selected option labels.
 	applied map[filterCategory]map[string]bool
+
+	// inline description toggle (options mode only)
+	inlineDesc        string // option name currently expanded, "" if none
+	inlineDescText    string // cached description text
+	inlineDescLoading bool   // fetch in progress
 }
 
 func newFilterState() filterState {

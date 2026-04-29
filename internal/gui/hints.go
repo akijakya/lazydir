@@ -42,6 +42,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"↑↓ / j k", "navigate", true},
 			{"enter", "open / toggle option", true},
 			{"tab", "toggle option (options view)", true},
+			{"i", "toggle class description", true},
 			{"esc", "back to filter list", true},
 			{"wheel", "scroll", false},
 		},
