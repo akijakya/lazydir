@@ -42,7 +42,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 
 ## Prerequisites
 
-- **Go 1.22+**
+- **Go 1.26+**
 - A running [AGNTCY Directory](https://github.com/agntcy/dir) server (local daemon or remote)
 
 To start a local daemon for testing:
@@ -149,7 +149,7 @@ lazydir -s my-dir.example.com:443 \
 | `o` (Connections panel) | Open OASF server connect dialog |
 | `r` | Refresh records from server |
 | `?` | Show the full keybinding popup for the focused panel |
-| `pgup` / `pgdown` | Scroll preview panel (when focused) |
+| `wheel` | Scroll (list and preview panels) |
 
 ## Architecture
 
@@ -158,16 +158,13 @@ lazydir/
 ├── main.go                        # Entry point; flag parsing; program startup
 ├── go.mod / go.sum
 ├── internal/
-│   ├── app/
-│   │   ├── model.go               # Root Bubble Tea model; layout; async command dispatch
-│   │   ├── keys.go                # Global key constants and helpers
-│   │   └── update.go              # (focus constants)
-│   ├── panels/
-│   │   ├── directory/             # Panel 1: server info + connect dialog
-│   │   ├── classes/               # Panel 2: Skills / Domains / Modules tabs
-│   │   └── records/               # Panel 3: record list + "/" filter
-│   ├── preview/
-│   │   └── preview.go             # Right viewport; JSON highlighting; text rendering
+│   ├── gui/
+│   │   ├── gui.go                 # Top-level Gui struct; gocui init; async helpers
+│   │   ├── layout.go              # Panel layout; frame drawing; status bar
+│   │   ├── views.go               # Render functions for filters, records, and preview
+│   │   ├── keybindings.go         # Key handlers; focus cycling; panel actions
+│   │   ├── filters.go             # Filter state; category aggregation; query building
+│   │   └── hints.go               # Options-bar and help-popup text generation
 │   ├── dirclient/
 │   │   └── wrapper.go             # Thin wrapper around github.com/agntcy/dir/client
 │   └── oasf/
@@ -184,8 +181,7 @@ lazydir/
 
 ### Technology
 
-- **[Bubble Tea v2](https://charm.land/bubbletea/v2)** — TUI framework (Elm Architecture for Go)
-- **[Lip Gloss v2](https://charm.land/lipgloss/v2)** — Terminal styling and layout
+- **[gocui](https://github.com/jesseduffield/gocui)** — Terminal UI library (jesseduffield fork, as used by lazygit)
 - **[Chroma v2](https://github.com/alecthomas/chroma)** — JSON syntax highlighting
 - **[agntcy/dir client](https://github.com/agntcy/dir)** — gRPC client for Directory API
 
