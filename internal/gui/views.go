@@ -67,9 +67,13 @@ var filterCategoryColor = map[filterCategory]string{
 // renderFiltersList draws the default mode: each filter category as a row,
 // with any applied selections rendered as indented child rows.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
-	v.Title = "[2] Filters"
+	title := "[2] Filters"
+	if app.state.filters.filterQuery != "" {
+		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
+	}
+	v.Title = title
 
-	rows := app.listRows()
+	rows := app.filteredListRows()
 	for _, r := range rows {
 		if r.option == "" {
 			fmt.Fprintln(v, " "+r.category.title())
@@ -104,9 +108,13 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 // indented green lines immediately below the option row.
 func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 	cat := app.state.filters.editing
-	v.Title = "[2] Filters — " + cat.title()
+	title := "[2] Filters — " + cat.title()
+	if app.state.filters.filterQuery != "" {
+		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
+	}
+	v.Title = title
 
-	options := app.optionsFor(cat)
+	options := app.filteredOptionsFor(cat)
 	applied := app.state.filters.applied[cat]
 	fs := &app.state.filters
 

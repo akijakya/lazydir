@@ -82,6 +82,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEsc, gocui.ModNone, app.filterEsc); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, '/', gocui.ModNone, app.filterOpenSearch); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewFilters, 'i', gocui.ModNone, app.filterToggleInfo); err != nil {
 		return err
 	}
@@ -271,7 +274,7 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 
 	switch app.state.filters.mode {
 	case filterModeList:
-		rows := app.listRows()
+		rows := app.filteredListRows()
 		if idx < 0 || idx >= len(rows) {
 			return nil
 		}
@@ -280,11 +283,12 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 		row := rows[idx]
 		app.state.filters.editing = row.category
 		app.state.filters.optionsCursor = 0
+		app.state.filters.filterQuery = ""
 		app.clearInlineDesc()
 		app.state.filters.mode = filterModeOptions
 		app.renderFiltersView(g)
 	case filterModeOptions:
-		options := app.optionsFor(app.state.filters.editing)
+		options := app.filteredOptionsFor(app.state.filters.editing)
 		if idx < 0 || idx >= len(options) {
 			return nil
 		}
@@ -312,12 +316,12 @@ func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
 	switch app.state.filters.mode {
 	case filterModeList:
-		rows := app.listRows()
+		rows := app.filteredListRows()
 		if app.state.filters.listCursor < len(rows)-1 {
 			app.state.filters.listCursor++
 		}
 	case filterModeOptions:
-		options := app.optionsFor(app.state.filters.editing)
+		options := app.filteredOptionsFor(app.state.filters.editing)
 		if app.state.filters.optionsCursor < len(options)-1 {
 			app.state.filters.optionsCursor++
 		}
@@ -332,13 +336,14 @@ func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
 func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
 	switch app.state.filters.mode {
 	case filterModeList:
-		rows := app.listRows()
+		rows := app.filteredListRows()
 		if app.state.filters.listCursor >= len(rows) {
 			return nil
 		}
 		row := rows[app.state.filters.listCursor]
 		app.state.filters.editing = row.category
 		app.state.filters.optionsCursor = 0
+		app.state.filters.filterQuery = ""
 		app.clearInlineDesc()
 		app.state.filters.mode = filterModeOptions
 		app.renderFiltersView(g)
@@ -363,6 +368,16 @@ func (app *Gui) filterTab(g *gocui.Gui, v *gocui.View) error {
 // it does nothing — there is no "clear all filters" gesture (intentional;
 // users remove filters by toggling them off in the options view).
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
+	if app.state.filters.filterQuery != "" {
+		app.state.filters.filterQuery = ""
+		if app.state.filters.mode == filterModeList {
+			app.state.filters.listCursor = 0
+		} else {
+			app.state.filters.optionsCursor = 0
+		}
+		app.renderFiltersView(g)
+		return nil
+	}
 	if app.state.filters.mode == filterModeOptions {
 		app.clearInlineDesc()
 		app.state.filters.mode = filterModeList
@@ -377,13 +392,59 @@ func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 // filter set so the [3] Records pane reflects it.
 func (app *Gui) toggleOptionUnderCursor(g *gocui.Gui) {
 	cat := app.state.filters.editing
-	options := app.optionsFor(cat)
+	options := app.filteredOptionsFor(cat)
 	if app.state.filters.optionsCursor >= len(options) {
 		return
 	}
 	app.toggleApplied(cat, options[app.state.filters.optionsCursor])
 	app.startRecordsStream()
 	app.renderFiltersView(g)
+}
+
+// filterOpenSearch opens the input prompt to search/filter items in the
+// currently active filter mode (categories in list mode, options in options mode).
+func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
+	prevQuery := app.state.filters.filterQuery
+	prompt := "Filter categories (/)"
+	if app.state.filters.mode == filterModeOptions {
+		prompt = fmt.Sprintf("Filter %s (/)", app.state.filters.editing.title())
+	}
+	app.openInput(prompt, app.state.filters.filterQuery,
+		func(value string) {
+			app.g.Update(func(g *gocui.Gui) error {
+				app.state.filters.filterQuery = value
+				if app.state.filters.mode == filterModeList {
+					app.state.filters.listCursor = 0
+				} else {
+					app.state.filters.optionsCursor = 0
+				}
+				app.renderFiltersView(g)
+				return nil
+			})
+		},
+		func() {
+			app.g.Update(func(g *gocui.Gui) error {
+				app.state.filters.filterQuery = prevQuery
+				if app.state.filters.mode == filterModeList {
+					app.state.filters.listCursor = 0
+				} else {
+					app.state.filters.optionsCursor = 0
+				}
+				app.renderFiltersView(g)
+				return nil
+			})
+		},
+		func(value string) {
+			app.state.filters.filterQuery = value
+			if app.state.filters.mode == filterModeList {
+				app.state.filters.listCursor = 0
+			} else {
+				app.state.filters.optionsCursor = 0
+			}
+			app.renderFiltersView(app.g)
+		},
+	)
+	return nil
 }
 
 // listCursorForCategory returns the row index of the supplied category in
@@ -447,6 +508,7 @@ func (app *Gui) recordSelect(g *gocui.Gui, v *gocui.View) error {
 }
 
 func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
+	prevQuery := app.state.filterQuery
 	app.openInput("Filter records (/)", app.state.filterQuery,
 		func(value string) {
 			app.g.Update(func(g *gocui.Gui) error {
@@ -457,7 +519,21 @@ func (app *Gui) openFilterDialog(g *gocui.Gui, v *gocui.View) error {
 				return nil
 			})
 		},
-		nil,
+		func() {
+			app.g.Update(func(g *gocui.Gui) error {
+				app.state.filterQuery = prevQuery
+				app.state.recordCursor = 0
+				app.applyNameFilter()
+				app.renderRecordsView(g)
+				return nil
+			})
+		},
+		func(value string) {
+			app.state.filterQuery = value
+			app.state.recordCursor = 0
+			app.applyNameFilter()
+			app.renderRecordsView(app.g)
+		},
 	)
 	return nil
 }
@@ -609,7 +685,7 @@ func (app *Gui) openConnectDialog(g *gocui.Gui, v *gocui.View) error {
 			}
 			go app.connect(cfg)
 		},
-		nil,
+		nil, nil,
 	)
 	return nil
 }
@@ -637,7 +713,7 @@ func (app *Gui) openOASFDialog(g *gocui.Gui, v *gocui.View) error {
 				return nil
 			})
 		},
-		nil,
+		nil, nil,
 	)
 	return nil
 }
@@ -729,7 +805,7 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	options := app.optionsFor(cat)
+	options := app.filteredOptionsFor(cat)
 	fs := &app.state.filters
 	if fs.optionsCursor >= len(options) {
 		return nil

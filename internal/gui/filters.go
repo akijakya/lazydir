@@ -2,6 +2,7 @@ package gui
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/akijakya/lazydir/internal/dirclient"
 )
@@ -149,6 +150,9 @@ type filterState struct {
 	inlineDesc        string // option name currently expanded, "" if none
 	inlineDescText    string // cached description text
 	inlineDescLoading bool   // fetch in progress
+
+	// / search query — applies to whichever mode is active (list or options)
+	filterQuery string
 }
 
 func newFilterState() filterState {
@@ -298,4 +302,47 @@ func boolValue(yes bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// filteredOptionsFor returns the options for a category, narrowed by the
+// active filter query. When no query is set all options are returned.
+func (app *Gui) filteredOptionsFor(c filterCategory) []string {
+	options := app.optionsFor(c)
+	q := app.state.filters.filterQuery
+	if q == "" {
+		return options
+	}
+	q = strings.ToLower(q)
+	out := make([]string, 0, len(options))
+	for _, opt := range options {
+		if strings.Contains(strings.ToLower(opt), q) {
+			out = append(out, opt)
+		}
+	}
+	return out
+}
+
+// filteredListRows returns the list rows filtered by the active query.
+// A category (and all its applied selections) is included when its title
+// matches the query.
+func (app *Gui) filteredListRows() []listRow {
+	rows := app.listRows()
+	q := app.state.filters.filterQuery
+	if q == "" {
+		return rows
+	}
+	q = strings.ToLower(q)
+	matching := map[filterCategory]bool{}
+	for _, c := range allFilterCategories {
+		if strings.Contains(strings.ToLower(c.title()), q) {
+			matching[c] = true
+		}
+	}
+	out := make([]listRow, 0, len(rows))
+	for _, r := range rows {
+		if matching[r.category] {
+			out = append(out, r)
+		}
+	}
+	return out
 }

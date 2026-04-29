@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/akijakya/lazydir/internal/dirclient"
 	"github.com/akijakya/lazydir/internal/oasf"
@@ -70,6 +71,8 @@ type appState struct {
 	prevView       string       // view to return focus to on dismiss
 	onInputConfirm func(string) // called with TextArea content on enter
 	onInputCancel  func()       // called on esc
+	onInputChange  func(string) // called live (debounced) as the user types; nil disables
+	inputDebounce  *time.Timer  // debounce timer for live onChange
 
 	// help popup state
 	helpPrevView string // view to return to when help closes
@@ -283,8 +286,9 @@ func (app *Gui) applyNameFilter() {
 }
 
 // openInput shows the shared input prompt, pre-fills it with initialValue,
-// focuses it, and wires confirm/cancel callbacks.
-func (app *Gui) openInput(title, initialValue string, onConfirm func(string), onCancel func()) {
+// focuses it, and wires confirm/cancel/change callbacks. When onChange is
+// non-nil the filter is applied live (debounced) as the user types.
+func (app *Gui) openInput(title, initialValue string, onConfirm func(string), onCancel func(), onChange func(string)) {
 	iv, err := app.g.View(viewInput)
 	if err != nil {
 		return
@@ -299,6 +303,13 @@ func (app *Gui) openInput(title, initialValue string, onConfirm func(string), on
 	app.state.inputTitle = title
 	app.state.onInputConfirm = onConfirm
 	app.state.onInputCancel = onCancel
+	app.state.onInputChange = onChange
+
+	if onChange != nil {
+		iv.Editor = &liveInputEditor{gui: app}
+	} else {
+		iv.Editor = nil
+	}
 
 	iv.Title = title
 	iv.Visible = true
@@ -312,11 +323,18 @@ func (app *Gui) openInput(title, initialValue string, onConfirm func(string), on
 
 // closeInput hides the input prompt and restores focus to the previous view.
 func (app *Gui) closeInput() {
+	if app.state.inputDebounce != nil {
+		app.state.inputDebounce.Stop()
+		app.state.inputDebounce = nil
+	}
+	app.state.onInputChange = nil
+
 	iv, err := app.g.View(viewInput)
 	if err != nil {
 		return
 	}
 	iv.Visible = false
+	iv.Editor = nil
 	app.state.inputVisible = false
 
 	target := app.state.prevView
@@ -325,5 +343,43 @@ func (app *Gui) closeInput() {
 	}
 	app.state.prevView = ""
 	_ = app.focusTo(app.g, target)
+}
+
+// liveInputEditor wraps the default text-area editor and schedules a
+// debounced onChange callback whenever the content changes.
+type liveInputEditor struct {
+	gui *Gui
+}
+
+func (e *liveInputEditor) Edit(v *gocui.View, key gocui.Key, ch rune, mod gocui.Modifier) bool {
+	before := v.TextArea.GetContent()
+	ret := gocui.DefaultEditor.Edit(v, key, ch, mod)
+	if v.TextArea.GetContent() != before {
+		e.gui.scheduleInputChange()
+	}
+	return ret
+}
+
+const inputDebounceDelay = 150 * time.Millisecond
+
+// scheduleInputChange resets the debounce timer so the onChange callback
+// fires inputDebounceDelay after the last keystroke.
+func (app *Gui) scheduleInputChange() {
+	if app.state.inputDebounce != nil {
+		app.state.inputDebounce.Stop()
+	}
+	app.state.inputDebounce = time.AfterFunc(inputDebounceDelay, func() {
+		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.onInputChange == nil {
+				return nil
+			}
+			iv, err := g.View(viewInput)
+			if err != nil {
+				return nil
+			}
+			app.state.onInputChange(strings.TrimSpace(iv.TextArea.GetContent()))
+			return nil
+		})
+	})
 }
 
