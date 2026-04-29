@@ -201,7 +201,19 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		nameW = 8
 	}
 
-	for _, r := range records {
+	const infoIndent = "      "
+	infoW := viewW - len(infoIndent) - 1
+	if infoW < 10 {
+		infoW = 10
+	}
+
+	lineNum := 0
+	targetLine := 0
+	for i, r := range records {
+		if i == app.state.recordCursor {
+			targetLine = lineNum
+		}
+
 		name := r.Name
 		if name == "" {
 			name = r.CID
@@ -214,17 +226,29 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 			version = "n/a"
 		}
 		fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
+		lineNum++
+
+		if r.CID != "" && r.CID == app.state.recordInfoCID {
+			var infoLines []string
+			if app.state.recordInfoLoading {
+				infoLines = []string{"\033[32mloading…\033[0m"}
+			} else if app.state.recordInfoText != "" {
+				infoLines = strings.Split(app.state.recordInfoText, "\n")
+			}
+			for _, il := range infoLines {
+				fmt.Fprintf(v, "%s%s\n", infoIndent, il)
+				lineNum++
+			}
+		}
 	}
 
-	// Position cursor — no header line anymore, so targetLine == cursor.
-	cursor := app.state.recordCursor
 	_, viewH := v.Size()
-	if cursor >= viewH {
-		_ = v.SetOrigin(0, cursor-viewH+1)
+	if targetLine >= viewH {
+		_ = v.SetOrigin(0, targetLine-viewH+1)
 		_ = v.SetCursor(0, viewH-1)
 	} else {
 		_ = v.SetOrigin(0, 0)
-		_ = v.SetCursor(0, cursor)
+		_ = v.SetCursor(0, targetLine)
 	}
 }
 

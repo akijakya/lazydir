@@ -3,6 +3,7 @@ package gui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/akijakya/lazydir/internal/dirclient"
@@ -103,6 +104,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, gocui.KeyEsc, gocui.ModNone, app.clearFilter); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'i', gocui.ModNone, app.recordToggleInfo); err != nil {
 		return err
 	}
 
@@ -409,6 +413,96 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 	app.applyNameFilter()
 	app.renderRecordsView(g)
 	return nil
+}
+
+// recordToggleInfo toggles the inline description for the currently highlighted
+// record, fetching it via the directory's PullInfo RPC.
+func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
+	records := app.state.filteredRecords
+	if app.state.recordCursor >= len(records) {
+		return nil
+	}
+	cid := records[app.state.recordCursor].CID
+	if cid == "" {
+		return nil
+	}
+
+	if app.state.recordInfoCID == cid {
+		app.clearRecordInlineDesc()
+		app.renderRecordsView(g)
+		return nil
+	}
+
+	app.state.recordInfoCID = cid
+	app.state.recordInfoText = ""
+	app.state.recordInfoLoading = true
+	app.renderRecordsView(g)
+
+	go app.fetchRecordInfo(cid)
+	return nil
+}
+
+func (app *Gui) fetchRecordInfo(cid string) {
+	client := app.state.client
+	if client == nil {
+		return
+	}
+
+	info, err := client.PullInfo(context.Background(), cid)
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.recordInfoCID != cid {
+			return nil
+		}
+		app.state.recordInfoLoading = false
+		if err != nil {
+			app.state.recordInfoText = err.Error()
+		} else {
+			app.state.recordInfoText = formatRecordInfo(info)
+		}
+		app.renderRecordsView(g)
+		return nil
+	})
+}
+
+// formatRecordInfo renders a RecordInfo as colored, human-readable lines.
+func formatRecordInfo(info *dirclient.RecordInfo) string {
+	const (
+		cyan    = "\033[36m"
+		yellow  = "\033[33m"
+		green   = "\033[32m"
+		magenta = "\033[35m"
+		reset   = "\033[0m"
+	)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("%sCID:%s %s", cyan, reset, info.CID))
+
+	if len(info.Annotations) > 0 {
+		sb.WriteString(fmt.Sprintf("\n%sAnnotations:%s", yellow, reset))
+		keys := make([]string, 0, len(info.Annotations))
+		for k := range info.Annotations {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sb.WriteString(fmt.Sprintf("\n    %s%s:%s %s", yellow, k, reset, info.Annotations[k]))
+		}
+	}
+
+	if info.SchemaVersion != "" {
+		sb.WriteString(fmt.Sprintf("\n%sSchema version:%s %s", green, reset, info.SchemaVersion))
+	}
+	if info.CreatedAt != "" {
+		sb.WriteString(fmt.Sprintf("\n%sCreated at:%s %s", magenta, reset, info.CreatedAt))
+	}
+
+	return sb.String()
+}
+
+func (app *Gui) clearRecordInlineDesc() {
+	app.state.recordInfoCID = ""
+	app.state.recordInfoText = ""
+	app.state.recordInfoLoading = false
 }
 
 // ── Preview panel handlers ────────────────────────────────────────────────────

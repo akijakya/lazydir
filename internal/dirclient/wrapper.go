@@ -280,6 +280,74 @@ func (c *Client) PullJSON(ctx context.Context, cid string) (string, error) {
 	return string(b), nil
 }
 
+// RecordInfo mirrors the output of "dirctl info --output json".
+type RecordInfo struct {
+	CID           string            `json:"cid"`
+	Annotations   map[string]string `json:"annotations,omitempty"`
+	SchemaVersion string            `json:"schemaVersion,omitempty"`
+	CreatedAt     string            `json:"createdAt,omitempty"`
+}
+
+// PullInfo fetches a single record by CID and returns its metadata, matching
+// the "dirctl info" output.
+func (c *Client) PullInfo(ctx context.Context, cid string) (*RecordInfo, error) {
+	record, err := c.c.Pull(ctx, &corev1.RecordRef{Cid: cid})
+	if err != nil {
+		return nil, fmt.Errorf("pulling record %s: %w", cid, err)
+	}
+
+	info := &RecordInfo{CID: cid}
+
+	data := record.GetData()
+	if data == nil {
+		return info, nil
+	}
+
+	decoded, err := decoder.DecodeRecord(data)
+	if err != nil || decoded == nil {
+		return info, nil
+	}
+
+	type recordFields interface {
+		GetName() string
+		GetVersion() string
+		GetSchemaVersion() string
+		GetAnnotations() map[string]string
+		GetCreatedAt() string
+	}
+
+	var r recordFields
+	switch {
+	case decoded.HasV1():
+		r = decoded.GetV1()
+	case decoded.HasV1Alpha2():
+		r = decoded.GetV1Alpha2()
+	case decoded.HasV1Alpha1():
+		r = decoded.GetV1Alpha1()
+	}
+	if r == nil {
+		return info, nil
+	}
+
+	info.SchemaVersion = r.GetSchemaVersion()
+	info.CreatedAt = r.GetCreatedAt()
+	info.Annotations = map[string]string{}
+	if name := r.GetName(); name != "" {
+		info.Annotations["name"] = name
+	}
+	if v := r.GetSchemaVersion(); v != "" {
+		info.Annotations["oasf-version"] = v
+	}
+	if v := r.GetVersion(); v != "" {
+		info.Annotations["version"] = v
+	}
+	for k, v := range r.GetAnnotations() {
+		info.Annotations[k] = v
+	}
+
+	return info, nil
+}
+
 // extractSummary pulls name/version/skills/domains/modules from a raw record.
 func extractSummary(record *corev1.Record) *RecordSummary {
 	cid := record.GetCid()

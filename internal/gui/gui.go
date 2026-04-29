@@ -48,6 +48,11 @@ type appState struct {
 	streamErr  string
 	cancelLoad context.CancelFunc
 
+	// inline record info toggle (records panel)
+	recordInfoCID     string // CID of the record whose info is expanded, "" if none
+	recordInfoText    string // cached description text
+	recordInfoLoading bool   // fetch in progress
+
 	// distinct values usable as filter options for each category, growing
 	// monotonically across every stream (we never forget an option once
 	// we've seen it, even if the next filtered stream wouldn't include it).
@@ -187,6 +192,9 @@ func (app *Gui) startRecordsStream() {
 	app.state.recordCursor = 0
 	app.state.streamErr = ""
 	app.state.stream = streamLoading
+	app.state.recordInfoCID = ""
+	app.state.recordInfoText = ""
+	app.state.recordInfoLoading = false
 	app.applyNameFilter()
 	app.renderRecordsView(app.g)
 	app.renderDirectory(app.g)

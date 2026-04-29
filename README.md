@@ -36,9 +36,9 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 | Panel | Purpose |
 |-------|---------|
 | **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
-| **[2] Filters** | Lists every filter category (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Pressing `enter` on a category opens its options view, where the values present in the loaded record set are listed; `tab` (or `enter`) toggles selection — multiple values can be active per category. `esc` returns from the options view to the filter list. Active selections appear as indented child rows under their category in the list view, and the `[3] Records` pane updates immediately as filters change. |
-| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Use `/` to further filter by name. Press `enter` to load the full record JSON in the preview panel. |
-| **Preview** | The right two-thirds of the screen. Displays either an OASF class description (plain text, when navigating skill/domain/module options) or syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
+| **[2] Filters** | Lists every filter category (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Pressing `enter` on a category opens its options view, where the values present in the loaded record set are listed; `tab` (or `enter`) toggles selection — multiple values can be active per category. `esc` returns from the options view to the filter list. Active selections appear as indented child rows under their category in the list view, and the `[3] Records` pane updates immediately as filters change. Press `i` in the options view to toggle the OASF class description inline (shown in green below the option). |
+| **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Use `/` to further filter by name. Press `enter` to load the full record JSON in the preview panel. Press `i` to toggle inline record info (CID, annotations, schema version, created-at) below the selected record. |
+| **Preview** | The right two-thirds of the screen. Displays syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
 
 ## Prerequisites
 
@@ -141,8 +141,10 @@ lazydir -s my-dir.example.com:443 \
 | `enter` (Filters list) | Open the options view for the selected category |
 | `enter` (Filters options) | Toggle the option under the cursor |
 | `tab` (Filters options) | Toggle the option under the cursor (multi-select) |
+| `i` (Filters options) | Toggle inline OASF class description |
 | `esc` (Filters options) | Return to the filter list |
 | `enter` (Records) | Load the full record JSON in the preview panel |
+| `i` (Records) | Toggle inline record info (CID, annotations, schema version, created-at) |
 | `/` (Records) | Start name filter |
 | `esc` (Records) | Clear name filter |
 | `c` (Connections panel) | Open Directory connect dialog |
@@ -177,7 +179,8 @@ lazydir/
 |------|--------|
 | Record list | `SearchRecords` gRPC call via `github.com/agntcy/dir/client` |
 | Record JSON | `Pull` gRPC call (by CID) |
-| Skill / Domain / Module descriptions | HTTP GET `https://schema.oasf.outshift.com/1.0.0/{skills|domains|modules}/{name}` |
+| Record info | `Pull` gRPC call (by CID), decoded to extract metadata |
+| Skill / Domain / Module descriptions | OASF SDK schema client via `oasf-sdk/pkg/schema` |
 
 ### Technology
 
