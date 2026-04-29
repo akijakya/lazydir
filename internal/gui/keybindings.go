@@ -142,12 +142,19 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 
-	// Mouse click focuses the clicked panel
-	for _, name := range []string{viewDirectory, viewFilters, viewRecords, viewPreview} {
+	// Mouse click focuses the clicked panel; records and filters get
+	// specialised handlers that also update the cursor / open categories.
+	for _, name := range []string{viewDirectory, viewPreview} {
 		n := name
 		if err := g.SetKeybinding(n, gocui.MouseLeft, gocui.ModNone, app.focusView(n)); err != nil {
 			return err
 		}
+	}
+	if err := g.SetKeybinding(viewRecords, gocui.MouseLeft, gocui.ModNone, app.recordMouseClick); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewFilters, gocui.MouseLeft, gocui.ModNone, app.filterMouseClick); err != nil {
+		return err
 	}
 
 	// ? opens help popup for all main panels
@@ -254,6 +261,39 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 
 // ── Filters panel handlers ────────────────────────────────────────────────────
 
+func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
+	if err := app.focusTo(g, viewFilters); err != nil {
+		return err
+	}
+	_, cy := v.Cursor()
+	_, oy := v.Origin()
+	idx := oy + cy
+
+	switch app.state.filters.mode {
+	case filterModeList:
+		rows := app.listRows()
+		if idx < 0 || idx >= len(rows) {
+			return nil
+		}
+		app.state.filters.listCursor = idx
+		app.renderFiltersView(g)
+		row := rows[idx]
+		app.state.filters.editing = row.category
+		app.state.filters.optionsCursor = 0
+		app.clearInlineDesc()
+		app.state.filters.mode = filterModeOptions
+		app.renderFiltersView(g)
+	case filterModeOptions:
+		options := app.optionsFor(app.state.filters.editing)
+		if idx < 0 || idx >= len(options) {
+			return nil
+		}
+		app.state.filters.optionsCursor = idx
+		app.toggleOptionUnderCursor(g)
+	}
+	return nil
+}
+
 func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
 	switch app.state.filters.mode {
 	case filterModeList:
@@ -359,6 +399,21 @@ func (app *Gui) listCursorForCategory(c filterCategory) int {
 }
 
 // ── Records panel handlers ────────────────────────────────────────────────────
+
+func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
+	if err := app.focusTo(g, viewRecords); err != nil {
+		return err
+	}
+	_, cy := v.Cursor()
+	_, oy := v.Origin()
+	idx := oy + cy
+	if idx >= 0 && idx < len(app.state.filteredRecords) {
+		app.state.recordCursor = idx
+		app.renderRecordsView(g)
+		app.autoPreviewRecord(g)
+	}
+	return nil
+}
 
 func (app *Gui) recordCursorUp(g *gocui.Gui, v *gocui.View) error {
 	if app.state.recordCursor > 0 {
