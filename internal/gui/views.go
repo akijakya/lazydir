@@ -100,11 +100,7 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 // indented green lines immediately below the option row.
 func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 	cat := app.state.filters.editing
-	title := "[2] Filters — " + cat.title()
-	if !cat.boolean() && (app.state.stream == streamLoading || app.state.stream == streamStreaming) {
-		title += " (still loading…)"
-	}
-	v.Title = title
+	v.Title = "[2] Filters — " + cat.title()
 
 	options := app.optionsFor(cat)
 	applied := app.state.filters.applied[cat]
