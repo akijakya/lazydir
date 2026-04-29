@@ -117,7 +117,7 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 
 // FirstPageSize controls how many records are pulled in the initial batch
 // before the loader signals "first page ready" to the caller. After that,
-// pagination continues transparently in the background.
+// remaining records arrive in streamBatchSize chunks.
 const FirstPageSize = 100
 
 // streamBatchSize is the size of the batches delivered after the first page.
@@ -126,13 +126,6 @@ const FirstPageSize = 100
 // directories. Tuned to be small enough to feel "live" but big enough to
 // keep redraws under control.
 const streamBatchSize = 50
-
-// rpcPageSize is how many records we ask the server for in a single
-// SearchRecords RPC. The server enforces its own cap (currently 1000 in
-// dirctl); we pick a value at that ceiling so we minimise round trips on
-// large directories. If the server returns fewer than rpcPageSize records,
-// we treat it as the last page and stop paginating.
-const rpcPageSize uint32 = 1000
 
 // StreamCallbacks bundle the optional notification hooks for Stream. Any of
 // the callbacks may be nil. They are invoked from the goroutine driving the
@@ -151,18 +144,15 @@ type StreamCallbacks struct {
 	OnDone func(err error)
 }
 
-// Stream issues SearchRecords RPCs with the supplied queries and drives the
-// returned streams until the server has nothing more to send or ctx is
-// cancelled. The first FirstPageSize records are delivered via OnFirstPage
-// (so the UI can paint quickly); remaining records arrive in OnBatch chunks.
-// Pagination across the server's per-RPC cap is handled internally — the
-// caller sees a single logical stream.
+// Stream issues a single SearchRecords RPC with the supplied queries and
+// drains the returned server stream until the server closes it (EOF) or ctx
+// is cancelled. The first FirstPageSize records are delivered via
+// OnFirstPage; remaining records arrive in OnBatch chunks.
+//
+// No limit/offset is set on the RPC — the server decides how many records
+// to return. Once the gRPC stream is exhausted, OnDone(nil) fires.
 //
 // Callbacks fire on this goroutine; cancel ctx to stop reading at any time.
-//
-// Stream is single-shot: callers should re-invoke it (typically with a new
-// ctx) whenever the active filter set changes. A previous in-flight call
-// should be cancelled by its own ctx before starting a new one.
 func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks) {
 	rpcQueries := make([]*searchv1.RecordQuery, 0, len(queries))
 	for _, q := range queries {
@@ -211,68 +201,52 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 		}
 	}
 
-	limit := rpcPageSize
-	var offset uint32
+	req := &searchv1.SearchRecordsRequest{
+		Queries: rpcQueries,
+	}
+	result, err := c.c.SearchRecords(ctx, req)
+	if err != nil {
+		finish(fmt.Errorf("searching records: %w", err))
+		return
+	}
 
 	for {
-		req := &searchv1.SearchRecordsRequest{
-			Queries: rpcQueries,
-			Limit:   &limit,
-			Offset:  &offset,
-		}
-		result, err := c.c.SearchRecords(ctx, req)
-		if err != nil {
-			finish(fmt.Errorf("searching records (offset=%d): %w", offset, err))
-			return
-		}
-
-		pageCount := uint32(0)
-	pageLoop:
-		for {
-			select {
-			case resp, ok := <-result.ResCh():
-				if !ok {
-					break pageLoop
-				}
-				record := resp.GetRecord()
-				if record == nil {
-					continue
-				}
-				s := extractSummary(record)
-				if s == nil {
-					continue
-				}
-				pageCount++
-				buf = append(buf, s)
-				if !firstPageSent {
-					if len(buf) >= FirstPageSize {
-						flushFirstPage()
-					}
-					continue
-				}
-				if len(buf) >= streamBatchSize {
-					flushBatch()
-				}
-			case streamErr := <-result.ErrCh():
-				if streamErr != nil {
-					finish(fmt.Errorf("receiving record (offset=%d): %w", offset, streamErr))
-					return
-				}
-				break pageLoop
-			case <-result.DoneCh():
-				break pageLoop
-			case <-ctx.Done():
-				finish(ctx.Err())
+		select {
+		case resp, ok := <-result.ResCh():
+			if !ok {
+				finish(nil)
 				return
 			}
-		}
-
-		// Short page → server has nothing more for us; stop paginating.
-		if pageCount < limit {
+			record := resp.GetRecord()
+			if record == nil {
+				continue
+			}
+			s := extractSummary(record)
+			if s == nil {
+				continue
+			}
+			buf = append(buf, s)
+			if !firstPageSent {
+				if len(buf) >= FirstPageSize {
+					flushFirstPage()
+				}
+				continue
+			}
+			if len(buf) >= streamBatchSize {
+				flushBatch()
+			}
+		case streamErr := <-result.ErrCh():
+			if streamErr != nil {
+				finish(fmt.Errorf("receiving record: %w", streamErr))
+				return
+			}
+		case <-result.DoneCh():
 			finish(nil)
 			return
+		case <-ctx.Done():
+			finish(ctx.Err())
+			return
 		}
-		offset += pageCount
 	}
 }
 

@@ -114,6 +114,7 @@ func New(cfg Config) error {
 	app.g = g
 	g.Highlight = true
 	g.SelFgColor = gocui.ColorGreen
+	g.SelFrameColor = gocui.ColorGreen
 	g.Mouse = true
 
 	g.SetManagerFunc(app.layout)
@@ -188,6 +189,7 @@ func (app *Gui) startRecordsStream() {
 	app.state.stream = streamLoading
 	app.applyNameFilter()
 	app.renderRecordsView(app.g)
+	app.renderDirectory(app.g)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	app.state.cancelLoad = cancel
@@ -205,6 +207,9 @@ func (app *Gui) startRecordsStream() {
 				for _, r := range summaries {
 					app.state.filterValues.add(r)
 				}
+				// Stay in streamLoading until OnDone confirms the stream
+				// is fully exhausted — avoids a "streaming…" flash when
+				// all records fit in the first page.
 				app.state.stream = streamStreaming
 				app.applyNameFilter()
 				app.renderRecordsView(g)
@@ -230,9 +235,6 @@ func (app *Gui) startRecordsStream() {
 		},
 		OnDone: func(err error) {
 			app.g.Update(func(g *gocui.Gui) error {
-				// A cancelled context means we were superseded by a newer
-				// stream; the new one will render the next state, ours has
-				// nothing more to say.
 				if ctx.Err() != nil {
 					return nil
 				}
@@ -244,6 +246,7 @@ func (app *Gui) startRecordsStream() {
 					app.state.stream = streamDone
 				}
 				app.renderRecordsView(g)
+				app.renderDirectory(g)
 				return nil
 			})
 		},

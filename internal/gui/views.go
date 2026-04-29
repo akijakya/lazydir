@@ -46,6 +46,19 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 	app.renderFiltersList(g, v)
 }
 
+// filterCategoryColor maps each filter category to a distinct ANSI color code
+// so that applied selections are visually distinguishable at a glance.
+var filterCategoryColor = map[filterCategory]string{
+	filterSkills:      "\033[33m", // yellow
+	filterDomains:     "\033[36m", // cyan
+	filterModules:     "\033[35m", // magenta
+	filterOASFVersion: "\033[32m", // green
+	filterVersion:     "\033[34m", // blue
+	filterAuthor:      "\033[91m", // bright red
+	filterTrusted:     "\033[93m", // bright yellow
+	filterVerified:    "\033[92m", // bright green
+}
+
 // renderFiltersList draws the default mode: each filter category as a row,
 // with any applied selections rendered as indented child rows.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
@@ -57,7 +70,8 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 			fmt.Fprintln(v, " "+r.category.title())
 			continue
 		}
-		fmt.Fprintln(v, "    "+r.option)
+		color := filterCategoryColor[r.category]
+		fmt.Fprintf(v, "    %s%s\033[0m\n", color, r.option)
 	}
 
 	// Clamp cursor to valid range and render position.
@@ -124,7 +138,8 @@ func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 	}
 }
 
-// renderRecordsView redraws the [3] Records panel.
+// renderRecordsView redraws the [3] Records panel and updates its title to
+// reflect the current record count, stream state, and name filter.
 func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	v, err := g.View(viewRecords)
 	if err != nil {
@@ -135,26 +150,22 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 	records := app.state.filteredRecords
 	total := len(app.state.records)
 
-	// Header line: count + stream state + name filter indicator
-	count := fmt.Sprintf("%d/%d", len(records), total)
-	if app.state.filterQuery == "" {
-		// No name query active: collapse the redundant N/N to a single number.
-		count = fmt.Sprintf("%d", total)
+	// Build the title: [3] Records (N)  /: foo
+	title := "[3] Records"
+	if total > 0 || app.state.stream == streamDone {
+		if app.state.filterQuery != "" {
+			title += fmt.Sprintf(" (%d/%d)", len(records), total)
+		} else {
+			title += fmt.Sprintf(" (%d)", total)
+		}
 	}
-	state := ""
-	switch app.state.stream {
-	case streamLoading:
-		state = " loading…"
-	case streamStreaming:
-		state = " streaming…"
-	case streamErrored:
-		state = " error: " + app.state.streamErr
+	if app.state.stream == streamErrored {
+		title += " (error)"
 	}
-	filterInfo := ""
 	if app.state.filterQuery != "" {
-		filterInfo = fmt.Sprintf("  filter: %s", app.state.filterQuery)
+		title += fmt.Sprintf("  /: %s", app.state.filterQuery)
 	}
-	fmt.Fprintf(v, " (%s)%s%s\n", count, state, filterInfo)
+	v.Title = title
 
 	viewW, _ := v.Size()
 	nameW := viewW - 14
@@ -177,16 +188,15 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
 	}
 
-	// Position cursor.
+	// Position cursor — no header line anymore, so targetLine == cursor.
 	cursor := app.state.recordCursor
 	_, viewH := v.Size()
-	targetLine := cursor + 1 // +1 for header line
-	if targetLine >= viewH {
-		_ = v.SetOrigin(0, targetLine-viewH+1)
+	if cursor >= viewH {
+		_ = v.SetOrigin(0, cursor-viewH+1)
 		_ = v.SetCursor(0, viewH-1)
 	} else {
 		_ = v.SetOrigin(0, 0)
-		_ = v.SetCursor(0, targetLine)
+		_ = v.SetCursor(0, cursor)
 	}
 }
 

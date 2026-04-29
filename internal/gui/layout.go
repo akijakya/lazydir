@@ -11,8 +11,7 @@ const (
 	viewFilters   = "filters"
 	viewRecords   = "records"
 	viewPreview   = "preview"
-	viewOptions   = "options" // bottom-left: context keybindings (like lazygit)
-	viewInfo      = "info"    // bottom-right: connection/version info
+	viewOptions   = "options" // bottom bar: context keybindings (like lazygit)
 	viewInput     = "input"   // shared editable prompt view, shown on demand
 	viewHelp      = "help"    // ? popup overlay, shown on demand
 )
@@ -38,13 +37,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	leftW := maxX / 3
 	rightX0 := leftW
 
-	// Bottom bar split: options (left, flexible) | info (right, fixed)
-	infoText := g.infoText()
-	infoW := len(infoText) + 2
-	if infoW > maxX/2 {
-		infoW = maxX / 2
-	}
-	optionsX1 := maxX - infoW - 2
+	optionsX1 := maxX - 1
 
 	// [1] Connections shows two lines (Directory, OASF) plus an optional
 	// auth-mode line. Height = frame(2) + content lines.
@@ -183,17 +176,6 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Frame = false
 	}
 
-	// Bottom-right: info bar — properties set every layout call (no frame)
-	if _, err := gui.SetView(viewInfo, optionsX1+1, bottomY0, maxX-1, bottomY1, 0); err != nil {
-		if !gocui.IsUnknownView(err) {
-			return err
-		}
-	}
-	if v, _ := gui.View(viewInfo); v != nil {
-		v.Frame = false
-		v.FgColor = gocui.ColorDefault | gocui.AttrBold
-	}
-
 	// Shared input prompt — lives as a regular row above its host panel.
 	// We still create the view at startup so focus/keybindings work; when
 	// not visible it's parked off-screen above the viewport.
@@ -246,7 +228,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 }
 
 // syncHighlight enables the row-highlight cursor on the focused list view only,
-// and disables it on all others — giving a clear visual focus cue.
+// and disables it on all others — giving a clear visual focus cue. The focused
+// panel's border is painted green via g.SelFrameColor set at init time.
 func (g *Gui) syncHighlight(gui *gocui.Gui, focused string) {
 	for _, name := range listViews {
 		v, err := gui.View(name)
@@ -265,21 +248,8 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
-		fmt.Fprint(v, optionsBarText(focused, v.InnerWidth()))
+		fmt.Fprintf(v, "\033[34m%s\033[0m", optionsBarText(focused, v.InnerWidth()))
 	}
-
-	if v, err := gui.View(viewInfo); err == nil {
-		v.Clear()
-		fmt.Fprint(v, g.infoText())
-	}
-}
-
-// infoText returns the short string shown in the right info bar.
-func (g *Gui) infoText() string {
-	if g.state.connected {
-		return "● " + g.state.serverAddr
-	}
-	return "○ not connected"
 }
 
 // inputHostView resolves which left-column panel the input prompt should
@@ -296,7 +266,8 @@ func (g *Gui) inputHostView() string {
 }
 
 // renderDirectory refreshes the [1] Connections panel with both the Directory
-// and OASF endpoints the app is currently talking to.
+// and OASF endpoints the app is currently talking to. A sync indicator is
+// appended to the Directory line while the records stream is in flight.
 func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	v, err := gui.View(viewDirectory)
 	if err != nil {
@@ -304,12 +275,18 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	}
 	v.Clear()
 
-	dirIcon := "○"
+	dirIcon := "\033[31m○\033[0m"
 	if g.state.connected {
-		dirIcon = "●"
+		dirIcon = "\033[32m●\033[0m"
 	}
 
-	fmt.Fprintf(v, " %s Directory: %s\n", dirIcon, g.state.serverAddr)
+	sync := ""
+	switch g.state.stream {
+	case streamLoading, streamStreaming:
+		sync = " ↻"
+	}
+
+	fmt.Fprintf(v, " %s Directory: %s%s\n", dirIcon, g.state.serverAddr, sync)
 	if g.state.authMode != "" {
 		fmt.Fprintf(v, "   auth: %s\n", g.state.authMode)
 	}
@@ -318,5 +295,5 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	if oasfAddr == "" {
 		oasfAddr = "(not configured)"
 	}
-	fmt.Fprintf(v, " ● OASF:      %s\n", oasfAddr)
+	fmt.Fprintf(v, " \033[32m●\033[0m OASF:      %s\n", oasfAddr)
 }
