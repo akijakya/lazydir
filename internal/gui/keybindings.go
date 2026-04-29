@@ -540,7 +540,7 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			sb.WriteString(fmt.Sprintf("\n    %s%s:%s %s", yellow, k, reset, info.Annotations[k]))
+			sb.WriteString(fmt.Sprintf("\n%s%s%s:%s %s", indent1, yellow, k, reset, info.Annotations[k]))
 		}
 	}
 

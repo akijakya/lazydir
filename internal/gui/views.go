@@ -12,6 +12,10 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
+// indent1 is the single-level indentation used for child rows everywhere in
+// the TUI (applied filter selections, inline descriptions, inline record info).
+const indent1 = "    "
+
 // lazydirStyle is a chroma style derived from "tango" with punctuation
 // remapped to plain white so that { } [ ] ( ) , : ; are readable on dark
 // terminals instead of the default bold-black that tango uses.
@@ -72,7 +76,7 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 			continue
 		}
 		color := filterCategoryColor[r.category]
-		fmt.Fprintf(v, "    %s%s\033[0m\n", color, r.option)
+		fmt.Fprintf(v, "%s%s%s\033[0m\n", indent1, color, r.option)
 	}
 
 	// Clamp cursor to valid range and render position.
@@ -117,9 +121,8 @@ func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 		fmt.Fprintln(v, " (no options available)")
 	}
 
-	const descIndent = "      "
 	viewW, _ := v.Size()
-	descW := viewW - len(descIndent) - 1
+	descW := viewW - len(indent1) - 1
 	if descW < 10 {
 		descW = 10
 	}
@@ -146,7 +149,7 @@ func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 				descLines = wrapText(fs.inlineDescText, descW)
 			}
 			for _, dl := range descLines {
-				fmt.Fprintf(v, "%s\033[32m%s\033[0m\n", descIndent, dl)
+				fmt.Fprintf(v, "%s\033[32m%s\033[0m\n", indent1, dl)
 				lineNum++
 			}
 		}
@@ -197,8 +200,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		nameW = 8
 	}
 
-	const infoIndent = "      "
-	infoW := viewW - len(infoIndent) - 1
+	infoW := viewW - len(indent1) - 1
 	if infoW < 10 {
 		infoW = 10
 	}
@@ -232,7 +234,7 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 				infoLines = strings.Split(app.state.recordInfoText, "\n")
 			}
 			for _, il := range infoLines {
-				fmt.Fprintf(v, "%s%s\n", infoIndent, il)
+				fmt.Fprintf(v, "%s%s\n", indent1, il)
 				lineNum++
 			}
 		}
