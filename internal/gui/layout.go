@@ -11,9 +11,10 @@ const (
 	viewFilters   = "filters"
 	viewRecords   = "records"
 	viewPreview   = "preview"
-	viewOptions   = "options" // bottom bar: context keybindings (like lazygit)
-	viewInput     = "input"   // shared editable prompt view, shown on demand
-	viewHelp      = "help"    // ? popup overlay, shown on demand
+	viewOptions   = "options"  // bottom bar: context keybindings (like lazygit)
+	viewInput     = "input"    // shared editable prompt view, shown on demand
+	viewHelp      = "help"     // ? popup overlay, shown on demand
+	viewCopyMenu  = "copymenu" // copy-options popup, shown on demand
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
@@ -209,6 +210,37 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 			return err
 		}
 		v.Title = " Keybindings  (esc/? to close) "
+		v.Frame = true
+		v.FrameRunes = roundedFrame
+		v.Wrap = false
+		v.Visible = false
+	}
+
+	// Copy-menu popup — positioned under the selected record when visible.
+	copyW := 28
+	copyH := 4 // frame(2) + 2 content lines
+	cmX0, cmY0, cmX1, cmY1 := 0, -(copyH + 1), copyW, -1
+	if cmv, _ := gui.View(viewCopyMenu); cmv != nil && cmv.Visible {
+		if rv, rvErr := gui.View(viewRecords); rvErr == nil {
+			_, cy := rv.Cursor()
+			screenY := recordY0 + 1 + cy
+			cmX0 = 2
+			cmY0 = screenY + 1
+			if cmY0+copyH-1 > panelBottom {
+				cmY0 = screenY - copyH
+			}
+			cmX1 = cmX0 + copyW
+			if cmX1 > leftW-1 {
+				cmX1 = leftW - 1
+			}
+			cmY1 = cmY0 + copyH - 1
+		}
+	}
+	if v, err := gui.SetView(viewCopyMenu, cmX0, cmY0, cmX1, cmY1, 0); err != nil {
+		if !gocui.IsUnknownView(err) {
+			return err
+		}
+		v.Title = " Copy options "
 		v.Frame = true
 		v.FrameRunes = roundedFrame
 		v.Wrap = false

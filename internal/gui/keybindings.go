@@ -3,6 +3,8 @@ package gui
 import (
 	"context"
 	"fmt"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -107,6 +109,23 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 	if err := g.SetKeybinding(viewRecords, 'i', gocui.ModNone, app.recordToggleInfo); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewRecords, 'y', gocui.ModNone, app.openCopyMenu); err != nil {
+		return err
+	}
+
+	// ── Copy menu popup ─────────────────────────────────────────────────────
+	if err := g.SetKeybinding(viewCopyMenu, 'c', gocui.ModNone, app.copyCID); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewCopyMenu, 'a', gocui.ModNone, app.copyRecordJSON); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyEsc, gocui.ModNone, app.closeCopyMenu); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewCopyMenu, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		return err
 	}
 
@@ -787,4 +806,102 @@ func (app *Gui) closeHelp(g *gocui.Gui, v *gocui.View) error {
 		target = viewRecords
 	}
 	return app.focusTo(g, target)
+}
+
+// ── Copy menu popup ───────────────────────────────────────────────────────────
+
+func (app *Gui) openCopyMenu(g *gocui.Gui, v *gocui.View) error {
+	records := app.state.filteredRecords
+	if app.state.recordCursor >= len(records) {
+		return nil
+	}
+
+	cv, err := g.View(viewCopyMenu)
+	if err != nil {
+		return nil
+	}
+
+	if cur := g.CurrentView(); cur != nil && cur.Name() != viewCopyMenu {
+		app.state.copyMenuPrevView = cur.Name()
+	}
+
+	cv.Clear()
+	fmt.Fprintln(cv, "  \033[36mc\033[0m  copy CID")
+	fmt.Fprintf(cv, "  \033[36ma\033[0m  copy record JSON")
+
+	cv.Visible = true
+	_, _ = g.SetCurrentView(viewCopyMenu)
+	_, _ = g.SetViewOnTop(viewCopyMenu)
+	return nil
+}
+
+func (app *Gui) closeCopyMenu(g *gocui.Gui, v *gocui.View) error {
+	cv, err := g.View(viewCopyMenu)
+	if err != nil {
+		return nil
+	}
+	cv.Visible = false
+
+	target := app.state.copyMenuPrevView
+	if target == "" {
+		target = viewRecords
+	}
+	return app.focusTo(g, target)
+}
+
+func (app *Gui) copyCID(g *gocui.Gui, v *gocui.View) error {
+	records := app.state.filteredRecords
+	if app.state.recordCursor >= len(records) {
+		return app.closeCopyMenu(g, v)
+	}
+	cid := records[app.state.recordCursor].CID
+	if cid == "" {
+		return app.closeCopyMenu(g, v)
+	}
+	_ = writeClipboard(cid)
+	return app.closeCopyMenu(g, v)
+}
+
+func (app *Gui) copyRecordJSON(g *gocui.Gui, v *gocui.View) error {
+	records := app.state.filteredRecords
+	if app.state.recordCursor >= len(records) {
+		return app.closeCopyMenu(g, v)
+	}
+	cid := records[app.state.recordCursor].CID
+	if cid == "" {
+		return app.closeCopyMenu(g, v)
+	}
+	if err := app.closeCopyMenu(g, v); err != nil {
+		return err
+	}
+	go app.fetchAndCopyJSON(cid)
+	return nil
+}
+
+func (app *Gui) fetchAndCopyJSON(cid string) {
+	ctx := context.Background()
+	jsonStr, err := app.state.client.PullJSON(ctx, cid)
+	if err != nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			app.renderPreviewText(g, "Error", "Failed to fetch record: "+err.Error())
+			return nil
+		})
+		return
+	}
+	_ = writeClipboard(jsonStr)
+}
+
+// writeClipboard writes text to the system clipboard.
+func writeClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	case "windows":
+		cmd = exec.Command("clip")
+	default:
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }

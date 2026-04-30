@@ -73,6 +73,9 @@ type appState struct {
 
 	// help popup state
 	helpPrevView string // view to return to when help closes
+
+	// copy menu popup state
+	copyMenuPrevView string // view to return to when copy menu closes
 }
 
 // Config bundles everything needed to start the GUI.

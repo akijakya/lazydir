@@ -53,6 +53,7 @@ var perPanelBindings = map[string]panelBindings{
 			{"↑↓ / j k", "navigate", true},
 			{"/", "filter by name", true},
 			{"i", "toggle record info", true},
+			{"y", "yank/copy options", true},
 			{"esc", "clear filter", false},
 			{"enter", "confirm filter", false},
 			{"wheel", "scroll", false},
