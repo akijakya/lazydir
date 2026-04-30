@@ -120,45 +120,32 @@ func (c filterCategory) boolean() bool {
 	return c == filterTrusted || c == filterVerified
 }
 
-// filterMode is the current display mode for the [2] Filters panel.
-type filterMode int
-
-const (
-	filterModeList    filterMode = iota // list of categories with applied selections under each
-	filterModeOptions                   // options for a single selected category
-)
-
 // filterState owns all mutable state for the [2] Filters panel and the set of
 // active filters that the records pane filters against. The map keys are
 // option labels (e.g. skill name, version string, "yes"/"no").
 type filterState struct {
-	mode filterMode
-
-	// list cursor: index over expanded rows (categories interleaved with
-	// applied selections under them).
+	// listCursor indexes the visible rows (categories + their child options).
 	listCursor int
 
-	// options view: which category is being edited and the cursor within
-	// the option list.
-	editing       filterCategory
-	optionsCursor int
+	// expanded tracks which categories have their options dropdown open.
+	expanded map[filterCategory]bool
 
 	// applied[category] -> set of selected option labels.
 	applied map[filterCategory]map[string]bool
 
-	// inline description toggle (options mode only)
+	// inline description toggle (press 'i' on an option row)
 	inlineDesc        string // option name currently expanded, "" if none
 	inlineDescText    string // cached description text
 	inlineDescLoading bool   // fetch in progress
 
-	// / search query — applies to whichever mode is active (list or options)
+	// / search query — searches option labels across all non-boolean categories
 	filterQuery string
 }
 
 func newFilterState() filterState {
 	return filterState{
-		mode:    filterModeList,
-		applied: map[filterCategory]map[string]bool{},
+		expanded: map[filterCategory]bool{},
+		applied:  map[filterCategory]map[string]bool{},
 	}
 }
 
@@ -229,14 +216,21 @@ type listRow struct {
 	option   string // empty for category headers
 }
 
-// listRows builds the visible rows for filterModeList: for each category, the
-// header followed by any applied selections on indented rows.
+// listRows builds the visible rows for the unified filter tree: each category
+// header is followed by either all available options (when expanded) or only
+// the currently selected options (when collapsed).
 func (app *Gui) listRows() []listRow {
 	var rows []listRow
 	for _, c := range allFilterCategories {
 		rows = append(rows, listRow{category: c})
-		for _, opt := range app.appliedFor(c) {
-			rows = append(rows, listRow{category: c, option: opt})
+		if app.state.filters.expanded[c] {
+			for _, opt := range app.optionsFor(c) {
+				rows = append(rows, listRow{category: c, option: opt})
+			}
+		} else {
+			for _, opt := range app.appliedFor(c) {
+				rows = append(rows, listRow{category: c, option: opt})
+			}
 		}
 	}
 	return rows
@@ -304,45 +298,34 @@ func boolValue(yes bool) string {
 	return "false"
 }
 
-// filteredOptionsFor returns the options for a category, narrowed by the
-// active filter query. When no query is set all options are returned.
-func (app *Gui) filteredOptionsFor(c filterCategory) []string {
-	options := app.optionsFor(c)
-	q := app.state.filters.filterQuery
-	if q == "" {
-		return options
-	}
-	q = strings.ToLower(q)
-	out := make([]string, 0, len(options))
-	for _, opt := range options {
-		if strings.Contains(strings.ToLower(opt), q) {
-			out = append(out, opt)
-		}
-	}
-	return out
-}
-
-// filteredListRows returns the list rows filtered by the active query.
-// A category (and all its applied selections) is included when its title
-// matches the query.
+// filteredListRows returns the rows to display. When no query is active it
+// delegates to listRows (respecting the expanded/collapsed state). When a
+// search query is active it ignores the expanded state and shows every option
+// whose label matches the query, grouped under its category header. Boolean
+// categories (Trusted / Verified) are excluded from search results.
 func (app *Gui) filteredListRows() []listRow {
-	rows := app.listRows()
 	q := app.state.filters.filterQuery
 	if q == "" {
-		return rows
+		return app.listRows()
 	}
 	q = strings.ToLower(q)
-	matching := map[filterCategory]bool{}
+	var rows []listRow
 	for _, c := range allFilterCategories {
-		if strings.Contains(strings.ToLower(c.title()), q) {
-			matching[c] = true
+		if c.boolean() {
+			continue
+		}
+		var matching []string
+		for _, opt := range app.optionsFor(c) {
+			if strings.Contains(strings.ToLower(opt), q) {
+				matching = append(matching, opt)
+			}
+		}
+		if len(matching) > 0 {
+			rows = append(rows, listRow{category: c})
+			for _, opt := range matching {
+				rows = append(rows, listRow{category: c, option: opt})
+			}
 		}
 	}
-	out := make([]listRow, 0, len(rows))
-	for _, r := range rows {
-		if matching[r.category] {
-			out = append(out, r)
-		}
-	}
-	return out
+	return rows
 }

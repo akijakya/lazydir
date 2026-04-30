@@ -76,9 +76,6 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEnter, gocui.ModNone, app.filterEnter); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewFilters, gocui.KeyTab, gocui.ModNone, app.filterTab); err != nil {
-		return err
-	}
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEsc, gocui.ModNone, app.filterEsc); err != nil {
 		return err
 	}
@@ -272,152 +269,82 @@ func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
 	_, oy := v.Origin()
 	idx := oy + cy
 
-	switch app.state.filters.mode {
-	case filterModeList:
-		rows := app.filteredListRows()
-		if idx < 0 || idx >= len(rows) {
-			return nil
-		}
-		app.state.filters.listCursor = idx
-		app.renderFiltersView(g)
-		row := rows[idx]
-		app.state.filters.editing = row.category
-		app.state.filters.optionsCursor = 0
-		app.state.filters.filterQuery = ""
-		app.clearInlineDesc()
-		app.state.filters.mode = filterModeOptions
-		app.renderFiltersView(g)
-	case filterModeOptions:
-		options := app.filteredOptionsFor(app.state.filters.editing)
-		if idx < 0 || idx >= len(options) {
-			return nil
-		}
-		app.state.filters.optionsCursor = idx
-		app.toggleOptionUnderCursor(g)
+	rows := app.filteredListRows()
+	if idx < 0 || idx >= len(rows) {
+		return nil
 	}
+	app.state.filters.listCursor = idx
+
+	row := rows[idx]
+	if row.option == "" {
+		app.state.filters.expanded[row.category] = !app.state.filters.expanded[row.category]
+		app.clearInlineDesc()
+	} else {
+		app.toggleApplied(row.category, row.option)
+		app.startRecordsStream()
+	}
+	app.renderFiltersView(g)
 	return nil
 }
 
 func (app *Gui) filterCursorUp(g *gocui.Gui, v *gocui.View) error {
-	switch app.state.filters.mode {
-	case filterModeList:
-		if app.state.filters.listCursor > 0 {
-			app.state.filters.listCursor--
-		}
-	case filterModeOptions:
-		if app.state.filters.optionsCursor > 0 {
-			app.state.filters.optionsCursor--
-		}
+	if app.state.filters.listCursor > 0 {
+		app.state.filters.listCursor--
 	}
 	app.renderFiltersView(g)
 	return nil
 }
 
 func (app *Gui) filterCursorDown(g *gocui.Gui, v *gocui.View) error {
-	switch app.state.filters.mode {
-	case filterModeList:
-		rows := app.filteredListRows()
-		if app.state.filters.listCursor < len(rows)-1 {
-			app.state.filters.listCursor++
-		}
-	case filterModeOptions:
-		options := app.filteredOptionsFor(app.state.filters.editing)
-		if app.state.filters.optionsCursor < len(options)-1 {
-			app.state.filters.optionsCursor++
-		}
+	rows := app.filteredListRows()
+	if app.state.filters.listCursor < len(rows)-1 {
+		app.state.filters.listCursor++
 	}
 	app.renderFiltersView(g)
 	return nil
 }
 
-// filterEnter dispatches by mode:
-// - list mode: open the options view for the category under the cursor
-// - options mode: toggle the selection under the cursor (same as tab)
+// filterEnter toggles expand/collapse on category headers and toggles
+// filter selection on option rows.
 func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
-	switch app.state.filters.mode {
-	case filterModeList:
-		rows := app.filteredListRows()
-		if app.state.filters.listCursor >= len(rows) {
-			return nil
-		}
-		row := rows[app.state.filters.listCursor]
-		app.state.filters.editing = row.category
-		app.state.filters.optionsCursor = 0
-		app.state.filters.filterQuery = ""
-		app.clearInlineDesc()
-		app.state.filters.mode = filterModeOptions
-		app.renderFiltersView(g)
-	case filterModeOptions:
-		app.toggleOptionUnderCursor(g)
+	rows := app.filteredListRows()
+	if app.state.filters.listCursor >= len(rows) {
+		return nil
 	}
+	row := rows[app.state.filters.listCursor]
+
+	if row.option == "" {
+		app.state.filters.expanded[row.category] = !app.state.filters.expanded[row.category]
+		app.clearInlineDesc()
+	} else {
+		app.toggleApplied(row.category, row.option)
+		app.startRecordsStream()
+	}
+	app.renderFiltersView(g)
 	return nil
 }
 
-// filterTab toggles the option under the cursor when in options mode; in
-// list mode it falls through to global focus cycling so the panel still
-// behaves like every other left-column panel.
-func (app *Gui) filterTab(g *gocui.Gui, v *gocui.View) error {
-	if app.state.filters.mode == filterModeOptions {
-		app.toggleOptionUnderCursor(g)
-		return nil
-	}
-	return app.cycleFocusForward(g, v)
-}
-
-// filterEsc returns from options mode back to the filter list. In list mode
-// it does nothing — there is no "clear all filters" gesture (intentional;
-// users remove filters by toggling them off in the options view).
+// filterEsc clears the search query when active. Otherwise it does nothing —
+// filters are removed by toggling them off with enter.
 func (app *Gui) filterEsc(g *gocui.Gui, v *gocui.View) error {
 	if app.state.filters.filterQuery != "" {
 		app.state.filters.filterQuery = ""
-		if app.state.filters.mode == filterModeList {
-			app.state.filters.listCursor = 0
-		} else {
-			app.state.filters.optionsCursor = 0
-		}
+		app.state.filters.listCursor = 0
 		app.renderFiltersView(g)
 		return nil
-	}
-	if app.state.filters.mode == filterModeOptions {
-		app.clearInlineDesc()
-		app.state.filters.mode = filterModeList
-		app.state.filters.listCursor = app.listCursorForCategory(app.state.filters.editing)
-		app.renderFiltersView(g)
 	}
 	return nil
 }
 
-// toggleOptionUnderCursor flips selection of the option highlighted in the
-// options view, then re-issues the SearchRecords stream with the updated
-// filter set so the [3] Records pane reflects it.
-func (app *Gui) toggleOptionUnderCursor(g *gocui.Gui) {
-	cat := app.state.filters.editing
-	options := app.filteredOptionsFor(cat)
-	if app.state.filters.optionsCursor >= len(options) {
-		return
-	}
-	app.toggleApplied(cat, options[app.state.filters.optionsCursor])
-	app.startRecordsStream()
-	app.renderFiltersView(g)
-}
-
-// filterOpenSearch opens the input prompt to search/filter items in the
-// currently active filter mode (categories in list mode, options in options mode).
+// filterOpenSearch opens the input prompt to search filter options across all
+// non-boolean categories simultaneously.
 func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 	prevQuery := app.state.filters.filterQuery
-	prompt := "Filter categories (/)"
-	if app.state.filters.mode == filterModeOptions {
-		prompt = fmt.Sprintf("Filter %s (/)", app.state.filters.editing.title())
-	}
-	app.openInput(prompt, app.state.filters.filterQuery,
+	app.openInput("Search filters (/)", app.state.filters.filterQuery,
 		func(value string) {
 			app.g.Update(func(g *gocui.Gui) error {
 				app.state.filters.filterQuery = value
-				if app.state.filters.mode == filterModeList {
-					app.state.filters.listCursor = 0
-				} else {
-					app.state.filters.optionsCursor = 0
-				}
+				app.state.filters.listCursor = 0
 				app.renderFiltersView(g)
 				return nil
 			})
@@ -425,38 +352,18 @@ func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 		func() {
 			app.g.Update(func(g *gocui.Gui) error {
 				app.state.filters.filterQuery = prevQuery
-				if app.state.filters.mode == filterModeList {
-					app.state.filters.listCursor = 0
-				} else {
-					app.state.filters.optionsCursor = 0
-				}
+				app.state.filters.listCursor = 0
 				app.renderFiltersView(g)
 				return nil
 			})
 		},
 		func(value string) {
 			app.state.filters.filterQuery = value
-			if app.state.filters.mode == filterModeList {
-				app.state.filters.listCursor = 0
-			} else {
-				app.state.filters.optionsCursor = 0
-			}
+			app.state.filters.listCursor = 0
 			app.renderFiltersView(app.g)
 		},
 	)
 	return nil
-}
-
-// listCursorForCategory returns the row index of the supplied category in
-// the expanded list view.
-func (app *Gui) listCursorForCategory(c filterCategory) int {
-	rows := app.listRows()
-	for i, r := range rows {
-		if r.category == c && r.option == "" {
-			return i
-		}
-	}
-	return 0
 }
 
 // ── Records panel handlers ────────────────────────────────────────────────────
@@ -761,14 +668,20 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 }
 
 // filterToggleInfo toggles the inline OASF description for the currently
-// highlighted skill/domain/module in the filter options view.
+// highlighted skill/domain/module option in the filter tree.
 func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
-	if app.state.filters.mode != filterModeOptions {
+	rows := app.filteredListRows()
+	fs := &app.state.filters
+	if fs.listCursor >= len(rows) {
 		return nil
 	}
-	cat := app.state.filters.editing
+	row := rows[fs.listCursor]
+	if row.option == "" {
+		return nil
+	}
+
 	var ct oasf.ClassType
-	switch cat {
+	switch row.category {
 	case filterSkills:
 		ct = oasf.ClassTypeSkill
 	case filterDomains:
@@ -779,13 +692,7 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 		return nil
 	}
 
-	options := app.filteredOptionsFor(cat)
-	fs := &app.state.filters
-	if fs.optionsCursor >= len(options) {
-		return nil
-	}
-	name := options[fs.optionsCursor]
-
+	name := row.option
 	if fs.inlineDesc == name {
 		app.clearInlineDesc()
 		app.renderFiltersView(g)

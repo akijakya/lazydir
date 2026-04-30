@@ -35,19 +35,14 @@ var lazydirStyle = func() *chroma.Style {
 	return s
 }()
 
-// renderFiltersView redraws the [2] Filters panel in either list or options
-// mode. It also updates the panel title to reflect the current mode.
+// renderFiltersView redraws the [2] Filters panel as a collapsible tree of
+// filter categories and their options.
 func (app *Gui) renderFiltersView(g *gocui.Gui) {
 	v, err := g.View(viewFilters)
 	if err != nil {
 		return
 	}
 	v.Clear()
-
-	if app.state.filters.mode == filterModeOptions {
-		app.renderFiltersOptions(g, v)
-		return
-	}
 	app.renderFiltersList(g, v)
 }
 
@@ -64,8 +59,9 @@ var filterCategoryColor = map[filterCategory]string{
 	filterVerified:    "\033[92m", // bright green
 }
 
-// renderFiltersList draws the default mode: each filter category as a row,
-// with any applied selections rendered as indented child rows.
+// renderFiltersList draws the unified filter tree: each category has a
+// collapse/expand triangle, child options are indented, and selected options
+// are rendered in the category's color instead of a [ ]/[x] checkbox.
 func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 	title := "[2] Filters"
 	if app.state.filters.filterQuery != "" {
@@ -74,59 +70,13 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 	v.Title = title
 
 	rows := app.filteredListRows()
-	for _, r := range rows {
-		if r.option == "" {
-			fmt.Fprintln(v, " "+r.category.title())
-			continue
-		}
-		color := filterCategoryColor[r.category]
-		fmt.Fprintf(v, "%s%s%s\033[0m\n", indent1, color, r.option)
-	}
-
-	// Clamp cursor to valid range and render position.
-	if app.state.filters.listCursor < 0 {
-		app.state.filters.listCursor = 0
-	}
-	if max := len(rows) - 1; max >= 0 && app.state.filters.listCursor > max {
-		app.state.filters.listCursor = max
-	}
-
-	_ = v.SetOrigin(0, 0)
-	targetLine := app.state.filters.listCursor
-	_, viewH := v.Size()
-	if targetLine >= viewH {
-		_ = v.SetOrigin(0, targetLine-viewH+1)
-		_ = v.SetCursor(0, viewH-1)
-	} else {
-		_ = v.SetCursor(0, targetLine)
-	}
-}
-
-// renderFiltersOptions draws the options sub-view for the category currently
-// being edited, with checkmarks next to selected items. When an option has
-// its inline description toggled (via 'i'), the description is rendered as
-// indented green lines immediately below the option row.
-func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
-	cat := app.state.filters.editing
-	title := "[2] Filters — " + cat.title()
-	if app.state.filters.filterQuery != "" {
-		title += fmt.Sprintf("  /: %s", app.state.filters.filterQuery)
-	}
-	v.Title = title
-
-	options := app.filteredOptionsFor(cat)
-	applied := app.state.filters.applied[cat]
 	fs := &app.state.filters
 
-	if fs.optionsCursor < 0 {
-		fs.optionsCursor = 0
+	if fs.listCursor < 0 {
+		fs.listCursor = 0
 	}
-	if max := len(options) - 1; max >= 0 && fs.optionsCursor > max {
-		fs.optionsCursor = max
-	}
-
-	if len(options) == 0 {
-		fmt.Fprintln(v, " (no options available)")
+	if max := len(rows) - 1; max >= 0 && fs.listCursor > max {
+		fs.listCursor = max
 	}
 
 	viewW, _ := v.Size()
@@ -137,19 +87,29 @@ func (app *Gui) renderFiltersOptions(g *gocui.Gui, v *gocui.View) {
 
 	lineNum := 0
 	targetLine := 0
-	for i, opt := range options {
-		if i == fs.optionsCursor {
+	for i, r := range rows {
+		if i == fs.listCursor {
 			targetLine = lineNum
 		}
 
-		mark := "[ ]"
-		if applied[opt] {
-			mark = "[x]"
+		if r.option == "" {
+			triangle := "▶"
+			if fs.expanded[r.category] || fs.filterQuery != "" {
+				triangle = "▼"
+			}
+			fmt.Fprintf(v, " %s %s\n", triangle, r.category.title())
+		} else {
+			applied := fs.applied[r.category]
+			if applied[r.option] {
+				color := filterCategoryColor[r.category]
+				fmt.Fprintf(v, "%s%s%s\033[0m\n", indent1, color, r.option)
+			} else {
+				fmt.Fprintf(v, "%s%s\n", indent1, r.option)
+			}
 		}
-		fmt.Fprintf(v, " %s %s\n", mark, opt)
 		lineNum++
 
-		if opt == fs.inlineDesc {
+		if r.option != "" && r.option == fs.inlineDesc {
 			var descLines []string
 			if fs.inlineDescLoading {
 				descLines = []string{"loading…"}
