@@ -99,25 +99,19 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 			}
 			fmt.Fprintf(v, " %s %s\n", triangle, r.category.title())
 		} else {
-			applied := fs.applied[r.category]
-			if applied[r.option] {
-				color := filterCategoryColor[r.category]
-				fmt.Fprintf(v, "%s%s%s\033[0m\n", indent1, color, r.option)
-			} else {
-				fmt.Fprintf(v, "%s%s\n", indent1, r.option)
-			}
+			app.renderFilterOption(v, r, fs.applied[r.category])
 		}
 		lineNum++
 
 		if r.option != "" && r.option == fs.inlineDesc {
 			var descLines []string
 			if fs.inlineDescLoading {
-				descLines = []string{"loading…"}
+				descLines = []string{"\033[32mloading…\033[0m"}
 			} else if fs.inlineDescText != "" {
-				descLines = wrapText(fs.inlineDescText, descW)
+				descLines = strings.Split(fs.inlineDescText, "\n")
 			}
 			for _, dl := range descLines {
-				fmt.Fprintf(v, "%s\033[32m%s\033[0m\n", indent1, dl)
+				fmt.Fprintf(v, "%s%s\n", indent1, dl)
 				lineNum++
 			}
 		}
@@ -130,6 +124,37 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 		_ = v.SetCursor(0, viewH-1)
 	} else {
 		_ = v.SetCursor(0, targetLine)
+	}
+}
+
+// renderFilterOption renders one option row. Class categories show "ID Caption"
+// when enrichment data is available; other categories show the raw option label.
+// Selected options use the category's color.
+func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]bool) {
+	const reset = "\033[0m"
+
+	entries := app.classEntriesFor(r.category)
+	selected := applied[r.option]
+	color := ""
+	if selected {
+		color = filterCategoryColor[r.category]
+	}
+
+	if e, ok := entries[r.option]; ok && e.Caption != "" {
+		idStr := fmt.Sprintf("%d", e.ID)
+		caption := e.Caption
+		if color != "" {
+			fmt.Fprintf(v, "%s%s%s %s%s\n", indent1, color, idStr, caption, reset)
+		} else {
+			fmt.Fprintf(v, "%s%s %s\n", indent1, idStr, caption)
+		}
+		return
+	}
+
+	if color != "" {
+		fmt.Fprintf(v, "%s%s%s%s\n", indent1, color, r.option, reset)
+	} else {
+		fmt.Fprintf(v, "%s%s\n", indent1, r.option)
 	}
 }
 

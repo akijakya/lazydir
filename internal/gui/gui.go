@@ -56,6 +56,12 @@ type appState struct {
 	// we've seen it, even if the next filtered stream wouldn't include it).
 	filterValues *filterValueAggregator
 
+	// classEntries caches enriched display info (ID, caption) for OASF
+	// taxonomy classes. Populated once after the first record batch
+	// arrives and provides the schema version needed for the lookup.
+	classEntries    map[oasf.ClassType]map[string]oasf.ClassEntry
+	classEntriesVer string // schema version used for the fetch, "" if not yet fetched
+
 	// [2] Filters panel state
 	filters filterState
 
@@ -218,9 +224,7 @@ func (app *Gui) startRecordsStream() {
 				for _, r := range summaries {
 					app.state.filterValues.add(r)
 				}
-				// Stay in streamLoading until OnDone confirms the stream
-				// is fully exhausted — avoids a "streaming…" flash when
-				// all records fit in the first page.
+				app.maybeStartClassEntriesFetch(summaries)
 				app.state.stream = streamStreaming
 				app.applyNameFilter()
 				app.renderRecordsView(g)
@@ -361,6 +365,48 @@ func (e *liveInputEditor) Edit(v *gocui.View, key gocui.Key, ch rune, mod gocui.
 }
 
 const inputDebounceDelay = 150 * time.Millisecond
+
+// maybeStartClassEntriesFetch kicks off a background taxonomy fetch for
+// skills/domains/modules when the first schema version is discovered in
+// the record stream. It is a no-op if the fetch has already been started.
+func (app *Gui) maybeStartClassEntriesFetch(summaries []*dirclient.RecordSummary) {
+	if app.state.classEntriesVer != "" {
+		return
+	}
+	for _, r := range summaries {
+		if r.SchemaVersion != "" {
+			app.state.classEntriesVer = r.SchemaVersion
+			go app.fetchClassEntries(r.SchemaVersion)
+			return
+		}
+	}
+}
+
+// fetchClassEntries fetches the full OASF taxonomy for all three class types
+// (skills, domains, modules) and stores the flattened entries in app state.
+func (app *Gui) fetchClassEntries(schemaVersion string) {
+	client := app.state.oasfClient
+	if client == nil {
+		return
+	}
+	ctx := context.Background()
+
+	for _, ct := range []oasf.ClassType{oasf.ClassTypeSkill, oasf.ClassTypeDomain, oasf.ClassTypeModule} {
+		entries, err := client.FetchAll(ctx, ct, schemaVersion)
+		if err != nil {
+			continue
+		}
+		ct := ct
+		app.g.Update(func(g *gocui.Gui) error {
+			if app.state.classEntries == nil {
+				app.state.classEntries = map[oasf.ClassType]map[string]oasf.ClassEntry{}
+			}
+			app.state.classEntries[ct] = entries
+			app.renderFiltersView(g)
+			return nil
+		})
+	}
+}
 
 // scheduleInputChange resets the debounce timer so the onChange callback
 // fires inputDebounceDelay after the last keystroke.

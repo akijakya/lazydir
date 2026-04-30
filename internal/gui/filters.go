@@ -1,10 +1,12 @@
 package gui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/akijakya/lazydir/internal/dirclient"
+	"github.com/akijakya/lazydir/internal/oasf"
 )
 
 // filterValueAggregator collects the unique values seen in the streamed
@@ -120,6 +122,12 @@ func (c filterCategory) boolean() bool {
 	return c == filterTrusted || c == filterVerified
 }
 
+// isClass reports whether the category maps to an OASF taxonomy class
+// (skills, domains, or modules) that can be enriched with ID/caption.
+func (c filterCategory) isClass() bool {
+	return c == filterSkills || c == filterDomains || c == filterModules
+}
+
 // filterState owns all mutable state for the [2] Filters panel and the set of
 // active filters that the records pane filters against. The map keys are
 // option labels (e.g. skill name, version string, "yes"/"no").
@@ -150,21 +158,22 @@ func newFilterState() filterState {
 }
 
 // optionsFor returns the option labels available for a given category, given
-// the records seen on the unfiltered stream so far. Booleans (Trusted /
-// Verified) always offer the same fixed yes/no choices regardless of what
-// has been streamed.
+// the records seen on the unfiltered stream so far. Class categories (skills,
+// domains, modules) are sorted by OASF ID when enrichment data is available;
+// other categories are sorted alphabetically.
 func (app *Gui) optionsFor(c filterCategory) []string {
 	a := app.state.filterValues
 	if a == nil {
 		return nil
 	}
+	var raw map[string]bool
 	switch c {
 	case filterSkills:
-		return sortedSet(a.skills)
+		raw = a.skills
 	case filterDomains:
-		return sortedSet(a.domains)
+		raw = a.domains
 	case filterModules:
-		return sortedSet(a.modules)
+		raw = a.modules
 	case filterOASFVersion:
 		return sortedSet(a.schemaVersion)
 	case filterVersion:
@@ -173,6 +182,39 @@ func (app *Gui) optionsFor(c filterCategory) []string {
 		return sortedSet(a.authors)
 	case filterTrusted, filterVerified:
 		return []string{"yes", "no"}
+	default:
+		return nil
+	}
+
+	out := make([]string, 0, len(raw))
+	for k := range raw {
+		out = append(out, k)
+	}
+
+	entries := app.classEntriesFor(c)
+	if len(entries) > 0 {
+		sort.Slice(out, func(i, j int) bool {
+			return entries[out[i]].ID < entries[out[j]].ID
+		})
+	} else {
+		sort.Strings(out)
+	}
+	return out
+}
+
+// classEntriesFor returns the OASF class entry map for a class filter
+// category, or nil if the category is not a class or enrichment is unavailable.
+func (app *Gui) classEntriesFor(c filterCategory) map[string]oasf.ClassEntry {
+	if app.state.classEntries == nil {
+		return nil
+	}
+	switch c {
+	case filterSkills:
+		return app.state.classEntries[oasf.ClassTypeSkill]
+	case filterDomains:
+		return app.state.classEntries[oasf.ClassTypeDomain]
+	case filterModules:
+		return app.state.classEntries[oasf.ClassTypeModule]
 	}
 	return nil
 }
@@ -302,7 +344,8 @@ func boolValue(yes bool) string {
 // delegates to listRows (respecting the expanded/collapsed state). When a
 // search query is active it ignores the expanded state and shows every option
 // whose label matches the query, grouped under its category header. Boolean
-// categories (Trusted / Verified) are excluded from search results.
+// categories (Trusted / Verified) are excluded from search results. For class
+// categories the search also matches against the OASF caption and ID.
 func (app *Gui) filteredListRows() []listRow {
 	q := app.state.filters.filterQuery
 	if q == "" {
@@ -314,9 +357,10 @@ func (app *Gui) filteredListRows() []listRow {
 		if c.boolean() {
 			continue
 		}
+		entries := app.classEntriesFor(c)
 		var matching []string
 		for _, opt := range app.optionsFor(c) {
-			if strings.Contains(strings.ToLower(opt), q) {
+			if app.optionMatchesQuery(opt, q, entries) {
 				matching = append(matching, opt)
 			}
 		}
@@ -328,4 +372,27 @@ func (app *Gui) filteredListRows() []listRow {
 		}
 	}
 	return rows
+}
+
+// optionMatchesQuery checks whether an option matches the search query. For
+// class categories with enrichment data it matches against name, caption,
+// and numeric ID.
+func (app *Gui) optionMatchesQuery(opt, q string, entries map[string]oasf.ClassEntry) bool {
+	if strings.Contains(strings.ToLower(opt), q) {
+		return true
+	}
+	if entries == nil {
+		return false
+	}
+	e, ok := entries[opt]
+	if !ok {
+		return false
+	}
+	if strings.Contains(strings.ToLower(e.Caption), q) {
+		return true
+	}
+	if strings.Contains(fmt.Sprintf("%d", e.ID), q) {
+		return true
+	}
+	return false
 }

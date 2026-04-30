@@ -78,6 +78,9 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEnter, gocui.ModNone, app.filterEnter); err != nil {
 		return err
 	}
+	if err := g.SetKeybinding(viewFilters, gocui.KeySpace, gocui.ModNone, app.filterToggleOption); err != nil {
+		return err
+	}
 	if err := g.SetKeybinding(viewFilters, gocui.KeyEsc, gocui.ModNone, app.filterEsc); err != nil {
 		return err
 	}
@@ -339,6 +342,23 @@ func (app *Gui) filterEnter(g *gocui.Gui, v *gocui.View) error {
 		app.toggleApplied(row.category, row.option)
 		app.startRecordsStream()
 	}
+	app.renderFiltersView(g)
+	return nil
+}
+
+// filterToggleOption toggles filter selection on the option under the cursor.
+// On category headers it does nothing (use enter to expand/collapse).
+func (app *Gui) filterToggleOption(g *gocui.Gui, v *gocui.View) error {
+	rows := app.filteredListRows()
+	if app.state.filters.listCursor >= len(rows) {
+		return nil
+	}
+	row := rows[app.state.filters.listCursor]
+	if row.option == "" {
+		return nil
+	}
+	app.toggleApplied(row.category, row.option)
+	app.startRecordsStream()
 	app.renderFiltersView(g)
 	return nil
 }
@@ -744,7 +764,8 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		return
 	}
 
-	info, err := client.Fetch(context.Background(), ct, name)
+	schemaVer := app.state.classEntriesVer
+	info, err := client.Fetch(context.Background(), ct, name, schemaVer)
 	app.g.Update(func(g *gocui.Gui) error {
 		if app.state.filters.inlineDesc != name {
 			return nil
@@ -753,11 +774,70 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		if err != nil {
 			app.state.filters.inlineDescText = err.Error()
 		} else {
-			app.state.filters.inlineDescText = info.Description
+			fv, _ := g.View(viewFilters)
+			descW := 40
+			if fv != nil {
+				w, _ := fv.Size()
+				descW = w - len(indent1) - 1
+				if descW < 20 {
+					descW = 20
+				}
+			}
+			app.state.filters.inlineDescText = formatClassInfo(info, descW)
 		}
 		app.renderFiltersView(g)
 		return nil
 	})
+}
+
+// formatClassInfo produces a pre-formatted, ANSI-colored text block showing
+// the class hierarchy tree and description, similar to record info display.
+func formatClassInfo(info *oasf.ClassInfo, descW int) string {
+	const (
+		cyan  = "\033[36m"
+		yel   = "\033[33m"
+		green = "\033[32m"
+		dim   = "\033[90m"
+		reset = "\033[0m"
+	)
+
+	var sb strings.Builder
+
+	// Hierarchy tree
+	ancestors := info.Ancestors
+	for depth, a := range ancestors {
+		prefix := strings.Repeat("    ", depth)
+		connector := "└── "
+		if depth == 0 {
+			connector = ""
+		}
+		fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s\n",
+			prefix, cyan, connector, yel, a.Caption, dim, a.ID, reset)
+	}
+
+	selfDepth := len(ancestors)
+	selfPrefix := strings.Repeat("    ", selfDepth)
+	selfConnector := "└── "
+	if selfDepth == 0 {
+		selfConnector = ""
+	}
+	caption := info.Caption
+	if caption == "" {
+		caption = info.Name
+	}
+	fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s",
+		selfPrefix, cyan, selfConnector, yel, caption, dim, info.ID, reset)
+
+	// Description
+	if info.Description != "" {
+		sb.WriteString("\n")
+		for _, dl := range wrapText(info.Description, descW) {
+			fmt.Fprintf(&sb, "%s%s%s", green, dl, reset)
+			sb.WriteString("\n")
+		}
+	}
+
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // clearInlineDesc resets the inline description toggle state.

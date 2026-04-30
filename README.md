@@ -36,7 +36,7 @@ A terminal user interface (TUI) for browsing and managing records in [AGNTCY Dir
 | Panel | Purpose |
 |-------|---------|
 | **[1] Connections** | Shows both endpoints the TUI is currently talking to — the Directory server and the OASF schema server — along with the connection status of the former. Press `c` to switch to a different Directory server and `o` to point at a different OASF schema server. |
-| **[2] Filters** | Lists every filter category as a collapsible tree (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Each category has a `▶`/`▼` triangle — pressing `enter` on a category expands or collapses its options dropdown; pressing `enter` on an option toggles its selection. Selected options are shown in a distinct color and remain visible under their category even when collapsed. Multiple values can be active per category. The `[3] Records` pane updates immediately as filters change. Press `/` to search across all non-boolean categories simultaneously — matching options appear grouped under their category headers as you type. Press `i` on a skill, domain, or module option to toggle its OASF class description inline (shown in green below the option). |
+| **[2] Filters** | Lists every filter category as a collapsible tree (Skills, Domains, Modules, OASF version, Version, Author, Trusted, Verified). Each category has a `▶`/`▼` triangle — pressing `enter` on a category expands or collapses its options dropdown; pressing `enter` or `space` on an option toggles its selection. Skills, domains, and modules display their OASF numeric ID and caption (fetched from the OASF schema server) sorted by ID. Selected options are shown in a distinct color and remain visible under their category even when collapsed. Multiple values can be active per category. The `[3] Records` pane updates immediately as filters change. Press `/` to search across all non-boolean categories simultaneously — matching options appear grouped under their category headers as you type; the search matches against name, caption, and ID. Press `i` on a skill, domain, or module option to toggle its OASF class hierarchy tree and description inline. |
 | **[3] Records** | Lists records that satisfy the active filters. Shows name and version. Use `/` to filter by name — results narrow live as you type. Press `enter` to load the full record JSON in the preview panel. Press `i` to toggle inline record info (CID, annotations, schema version, created-at) below the selected record. Press `y` to open a yank/copy menu where `c` copies the CID and `a` copies the full record JSON to the clipboard. |
 | **Preview** | The right two-thirds of the screen. Displays syntax-highlighted JSON of the selected record. Scroll with `↑`/`↓` when the preview panel is focused. |
 
@@ -143,9 +143,9 @@ lazydir -s my-dir.example.com:443 \
 | `↑` / `k` | Move cursor up |
 | `↓` / `j` | Move cursor down |
 | `enter` (Filters, on category) | Expand / collapse the category dropdown |
-| `enter` (Filters, on option) | Toggle filter selection |
-| `/` (Filters) | Search options across all categories |
-| `i` (Filters, on option) | Toggle inline OASF class description |
+| `enter` / `space` (Filters, on option) | Toggle filter selection |
+| `/` (Filters) | Search options across all categories (name, caption, ID) |
+| `i` (Filters, on option) | Toggle inline OASF class hierarchy and description |
 | `esc` (Filters) | Clear search query |
 | `enter` (Records) | Load the full record JSON in the preview panel |
 | `i` (Records) | Toggle inline record info (CID, annotations, schema version, created-at) |

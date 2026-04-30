@@ -22,12 +22,22 @@ const (
 	ClassTypeModule ClassType = "modules"
 )
 
-// ClassInfo holds user-visible info about a taxonomy class.
+// ClassEntry is a lightweight display-oriented record for a taxonomy class.
+type ClassEntry struct {
+	ID      int
+	Name    string
+	Caption string
+}
+
+// ClassInfo holds user-visible info about a taxonomy class, including its
+// position in the hierarchy.
 type ClassInfo struct {
+	ID          int
 	Name        string
 	Caption     string
 	Description string
 	Type        ClassType
+	Ancestors   []ClassEntry // path from the taxonomy root to the parent (not including the item)
 }
 
 // Config configures the OASF schema client.
@@ -69,11 +79,10 @@ func (c *Client) ServerAddress() string {
 	return c.cfg.ServerAddress
 }
 
-// Fetch retrieves the description for a taxonomy class by its fully-qualified
-// name (e.g. "natural_language_processing/text_completion"). The lookup walks
-// the nested category tree returned by the SDK until it finds a matching node.
-func (c *Client) Fetch(ctx context.Context, classType ClassType, name string) (*ClassInfo, error) {
-	key := string(classType) + "|" + name
+// Fetch retrieves class info (including ancestors) for a taxonomy class by
+// name. schemaVersion may be empty to use the server default.
+func (c *Client) Fetch(ctx context.Context, classType ClassType, name, schemaVersion string) (*ClassInfo, error) {
+	key := string(classType) + "|" + name + "|" + schemaVersion
 	c.cacheM.Lock()
 	if v, ok := c.cache[key]; ok {
 		c.cacheM.Unlock()
@@ -81,25 +90,26 @@ func (c *Client) Fetch(ctx context.Context, classType ClassType, name string) (*
 	}
 	c.cacheM.Unlock()
 
-	// Budget the lookup so the UI does not hang on slow networks.
 	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	taxonomy, err := c.getTaxonomy(reqCtx, classType)
+	taxonomy, err := c.getTaxonomyVersioned(reqCtx, classType, schemaVersion)
 	if err != nil {
 		return nil, err
 	}
 
-	item, ok := findItem(taxonomy, name)
+	item, ancestors, ok := findItemWithPath(map[string]sdkschema.TaxonomyItem(taxonomy), name)
 	if !ok {
 		return nil, fmt.Errorf("class %q not found in OASF %s taxonomy", name, classType)
 	}
 
 	info := &ClassInfo{
+		ID:          item.ID,
 		Name:        item.Name,
 		Caption:     item.Caption,
 		Description: item.Description,
 		Type:        classType,
+		Ancestors:   ancestors,
 	}
 	if info.Description == "" {
 		info.Description = "No description available."
@@ -112,36 +122,73 @@ func (c *Client) Fetch(ctx context.Context, classType ClassType, name string) (*
 	return info, nil
 }
 
-func (c *Client) getTaxonomy(ctx context.Context, classType ClassType) (sdkschema.Taxonomy, error) {
+// FetchAll returns a flat map of name → ClassEntry for every item in the
+// taxonomy of the given type. schemaVersion may be empty to use the default.
+func (c *Client) FetchAll(ctx context.Context, classType ClassType, schemaVersion string) (map[string]ClassEntry, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	taxonomy, err := c.getTaxonomyVersioned(reqCtx, classType, schemaVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := map[string]ClassEntry{}
+	collectEntries(map[string]sdkschema.TaxonomyItem(taxonomy), entries)
+	return entries, nil
+}
+
+func collectEntries(items map[string]sdkschema.TaxonomyItem, out map[string]ClassEntry) {
+	for _, item := range items {
+		out[item.Name] = ClassEntry{
+			ID:      item.ID,
+			Name:    item.Name,
+			Caption: item.Caption,
+		}
+		if len(item.Classes) > 0 {
+			collectEntries(item.Classes, out)
+		}
+	}
+}
+
+func (c *Client) getTaxonomyVersioned(ctx context.Context, classType ClassType, schemaVersion string) (sdkschema.Taxonomy, error) {
+	var opts []sdkschema.SchemaOption
+	if schemaVersion != "" {
+		opts = append(opts, sdkschema.WithSchemaVersion(schemaVersion))
+	}
 	switch classType {
 	case ClassTypeSkill:
-		return c.sdk.GetSchemaSkills(ctx)
+		return c.sdk.GetSchemaSkills(ctx, opts...)
 	case ClassTypeDomain:
-		return c.sdk.GetSchemaDomains(ctx)
+		return c.sdk.GetSchemaDomains(ctx, opts...)
 	case ClassTypeModule:
-		return c.sdk.GetSchemaModules(ctx)
+		return c.sdk.GetSchemaModules(ctx, opts...)
 	default:
 		return nil, fmt.Errorf("unknown OASF class type %q", classType)
 	}
 }
 
-// findItem walks the nested taxonomy tree and returns the TaxonomyItem whose
-// Name matches the supplied identifier. The SDK Taxonomy is a map of top-level
-// categories, each containing Classes which may themselves be categories.
-func findItem(root sdkschema.Taxonomy, name string) (sdkschema.TaxonomyItem, bool) {
-	return findInItems(map[string]sdkschema.TaxonomyItem(root), name)
+// findItemWithPath walks the taxonomy tree and returns the matching item
+// together with the ancestor chain from the root to its parent.
+func findItemWithPath(items map[string]sdkschema.TaxonomyItem, name string) (sdkschema.TaxonomyItem, []ClassEntry, bool) {
+	return findInItemsWithPath(items, name, nil)
 }
 
-func findInItems(items map[string]sdkschema.TaxonomyItem, name string) (sdkschema.TaxonomyItem, bool) {
+func findInItemsWithPath(items map[string]sdkschema.TaxonomyItem, name string, path []ClassEntry) (sdkschema.TaxonomyItem, []ClassEntry, bool) {
 	for _, item := range items {
 		if item.Name == name {
-			return item, true
+			return item, path, true
 		}
 		if len(item.Classes) > 0 {
-			if child, ok := findInItems(item.Classes, name); ok {
-				return child, true
+			deeper := append(append([]ClassEntry(nil), path...), ClassEntry{
+				ID:      item.ID,
+				Name:    item.Name,
+				Caption: item.Caption,
+			})
+			if child, childPath, ok := findInItemsWithPath(item.Classes, name, deeper); ok {
+				return child, childPath, true
 			}
 		}
 	}
-	return sdkschema.TaxonomyItem{}, false
+	return sdkschema.TaxonomyItem{}, nil, false
 }
