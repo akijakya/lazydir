@@ -82,6 +82,10 @@ type appState struct {
 
 	// copy menu popup state
 	copyMenuPrevView string // view to return to when copy menu closes
+
+	// info popup state (shared between filters and records panels)
+	infoPrevView   string // view to return to when info popup closes
+	infoPopupPanel string // which panel opened the popup (viewFilters or viewRecords)
 }
 
 // Config bundles everything needed to start the GUI.

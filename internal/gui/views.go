@@ -102,19 +102,6 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 			app.renderFilterOption(v, r, fs.applied[r.category])
 		}
 		lineNum++
-
-		if r.option != "" && r.option == fs.inlineDesc {
-			var descLines []string
-			if fs.inlineDescLoading {
-				descLines = []string{"\033[32mloading…\033[0m"}
-			} else if fs.inlineDescText != "" {
-				descLines = strings.Split(fs.inlineDescText, "\n")
-			}
-			for _, dl := range descLines {
-				fmt.Fprintf(v, "%s%s\n", indent1, dl)
-				lineNum++
-			}
-		}
 	}
 
 	_ = v.SetOrigin(0, 0)
@@ -213,19 +200,6 @@ func (app *Gui) renderRecordsView(g *gocui.Gui) {
 		}
 		fmt.Fprintf(v, " %-*s  %s\n", nameW, name, version)
 		lineNum++
-
-		if r.CID != "" && r.CID == app.state.recordInfoCID {
-			var infoLines []string
-			if app.state.recordInfoLoading {
-				infoLines = []string{"\033[32mloading…\033[0m"}
-			} else if app.state.recordInfoText != "" {
-				infoLines = strings.Split(app.state.recordInfoText, "\n")
-			}
-			for _, il := range infoLines {
-				fmt.Fprintf(v, "%s%s\n", indent1, il)
-				lineNum++
-			}
-		}
 	}
 
 	_, viewH := v.Size()

@@ -118,6 +118,27 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 		return err
 	}
 
+	// ── Info popup ──────────────────────────────────────────────────────────
+	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyEsc, gocui.ModNone, app.closeInfoPopup); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewInfoPopup, 'i', gocui.ModNone, app.closeInfoPopup); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
+		return err
+	}
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewInfoPopup, key, gocui.ModNone, app.previewScrollUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewInfoPopup, key, gocui.ModNone, app.previewScrollDown); err != nil {
+			return err
+		}
+	}
+
 	// ── Copy menu popup ─────────────────────────────────────────────────────
 	if err := g.SetKeybinding(viewCopyMenu, 'c', gocui.ModNone, app.copyCID); err != nil {
 		return err
@@ -284,6 +305,7 @@ func (app *Gui) cycleFocus(g *gocui.Gui, dir int) error {
 // ── Filters panel handlers ────────────────────────────────────────────────────
 
 func (app *Gui) filterMouseClick(g *gocui.Gui, v *gocui.View) error {
+	app.hideInfoPopupIfVisible(g)
 	if err := app.focusTo(g, viewFilters); err != nil {
 		return err
 	}
@@ -408,6 +430,7 @@ func (app *Gui) filterOpenSearch(g *gocui.Gui, v *gocui.View) error {
 // ── Records panel handlers ────────────────────────────────────────────────────
 
 func (app *Gui) recordMouseClick(g *gocui.Gui, v *gocui.View) error {
+	app.hideInfoPopupIfVisible(g)
 	if err := app.focusTo(g, viewRecords); err != nil {
 		return err
 	}
@@ -492,8 +515,8 @@ func (app *Gui) clearFilter(g *gocui.Gui, v *gocui.View) error {
 	return nil
 }
 
-// recordToggleInfo toggles the inline description for the currently highlighted
-// record, fetching it via the directory's PullInfo RPC.
+// recordToggleInfo opens/closes the info popup for the currently highlighted
+// record, fetching details via the directory's PullInfo RPC.
 func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	records := app.state.filteredRecords
 	if app.state.recordCursor >= len(records) {
@@ -505,15 +528,13 @@ func (app *Gui) recordToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	if app.state.recordInfoCID == cid {
-		app.clearRecordInlineDesc()
-		app.renderRecordsView(g)
-		return nil
+		return app.closeInfoPopup(g, v)
 	}
 
 	app.state.recordInfoCID = cid
 	app.state.recordInfoText = ""
 	app.state.recordInfoLoading = true
-	app.renderRecordsView(g)
+	app.openInfoPopup(g, viewRecords)
 
 	go app.fetchRecordInfo(cid)
 	return nil
@@ -536,15 +557,15 @@ func (app *Gui) fetchRecordInfo(cid string) {
 		} else {
 			app.state.recordInfoText = formatRecordInfo(info)
 		}
-		app.renderRecordsView(g)
+		app.renderInfoPopup(g)
 		return nil
 	})
 }
 
 // formatRecordInfo renders a RecordInfo as colored, human-readable lines.
+// The CID is omitted here because it's already shown in the preview panel title.
 func formatRecordInfo(info *dirclient.RecordInfo) string {
 	const (
-		cyan    = "\033[36m"
 		yellow  = "\033[33m"
 		green   = "\033[32m"
 		magenta = "\033[35m"
@@ -552,10 +573,11 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 	)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "%sCID:%s %s", cyan, reset, info.CID)
+	first := true
 
 	if len(info.Annotations) > 0 {
-		fmt.Fprintf(&sb, "\n%sAnnotations:%s", yellow, reset)
+		fmt.Fprintf(&sb, "%sAnnotations:%s", yellow, reset)
+		first = false
 		keys := make([]string, 0, len(info.Annotations))
 		for k := range info.Annotations {
 			keys = append(keys, k)
@@ -567,10 +589,17 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 	}
 
 	if info.SchemaVersion != "" {
-		fmt.Fprintf(&sb, "\n%sSchema version:%s %s", green, reset, info.SchemaVersion)
+		if !first {
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "%sSchema version:%s %s", green, reset, info.SchemaVersion)
+		first = false
 	}
 	if info.CreatedAt != "" {
-		fmt.Fprintf(&sb, "\n%sCreated at:%s %s", magenta, reset, info.CreatedAt)
+		if !first {
+			sb.WriteString("\n")
+		}
+		fmt.Fprintf(&sb, "%sCreated at:%s %s", magenta, reset, info.CreatedAt)
 	}
 
 	return sb.String()
@@ -706,8 +735,8 @@ func (app *Gui) autoPreviewRecord(g *gocui.Gui) {
 	go app.pullRecord(cid)
 }
 
-// filterToggleInfo toggles the inline OASF description for the currently
-// highlighted skill/domain/module option in the filter tree.
+// filterToggleInfo opens/closes the info popup for the currently highlighted
+// skill/domain/module option in the filter tree.
 func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 	rows := app.filteredListRows()
 	fs := &app.state.filters
@@ -733,22 +762,20 @@ func (app *Gui) filterToggleInfo(g *gocui.Gui, v *gocui.View) error {
 
 	name := row.option
 	if fs.inlineDesc == name {
-		app.clearInlineDesc()
-		app.renderFiltersView(g)
-		return nil
+		return app.closeInfoPopup(g, v)
 	}
 
 	fs.inlineDesc = name
 	fs.inlineDescText = ""
 	fs.inlineDescLoading = true
-	app.renderFiltersView(g)
+	app.openInfoPopup(g, viewFilters)
 
 	go app.fetchInlineDesc(ct, name)
 	return nil
 }
 
 // fetchInlineDesc fetches the OASF description for name and stores it in
-// the inline description state, triggering a re-render on completion.
+// the filter info state, triggering a popup re-render on completion.
 func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 	client := app.state.oasfClient
 	if client == nil {
@@ -758,7 +785,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 			}
 			app.state.filters.inlineDescLoading = false
 			app.state.filters.inlineDescText = "OASF not configured"
-			app.renderFiltersView(g)
+			app.renderInfoPopup(g)
 			return nil
 		})
 		return
@@ -774,18 +801,18 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 		if err != nil {
 			app.state.filters.inlineDescText = err.Error()
 		} else {
-			fv, _ := g.View(viewFilters)
+			ipv, _ := g.View(viewInfoPopup)
 			descW := 40
-			if fv != nil {
-				w, _ := fv.Size()
-				descW = w - len(indent1) - 1
+			if ipv != nil {
+				w, _ := ipv.Size()
+				descW = w - 2
 				if descW < 20 {
 					descW = 20
 				}
 			}
 			app.state.filters.inlineDescText = formatClassInfo(info, descW)
 		}
-		app.renderFiltersView(g)
+		app.renderInfoPopup(g)
 		return nil
 	})
 }
@@ -795,18 +822,19 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 func formatClassInfo(info *oasf.ClassInfo, descW int) string {
 	const (
 		cyan  = "\033[36m"
+		blue  = "\033[34m"
 		yel   = "\033[33m"
-		green = "\033[32m"
 		dim   = "\033[90m"
 		reset = "\033[0m"
 	)
 
 	var sb strings.Builder
 
-	// Hierarchy tree
+	// Taxonomy header + hierarchy tree
+	fmt.Fprintf(&sb, "%sTaxonomy:%s\n", blue, reset)
 	ancestors := info.Ancestors
 	for depth, a := range ancestors {
-		prefix := strings.Repeat("    ", depth)
+		prefix := indent1 + strings.Repeat("    ", depth)
 		connector := "└── "
 		if depth == 0 {
 			connector = ""
@@ -816,7 +844,7 @@ func formatClassInfo(info *oasf.ClassInfo, descW int) string {
 	}
 
 	selfDepth := len(ancestors)
-	selfPrefix := strings.Repeat("    ", selfDepth)
+	selfPrefix := indent1 + strings.Repeat("    ", selfDepth)
 	selfConnector := "└── "
 	if selfDepth == 0 {
 		selfConnector = ""
@@ -830,10 +858,9 @@ func formatClassInfo(info *oasf.ClassInfo, descW int) string {
 
 	// Description
 	if info.Description != "" {
-		sb.WriteString("\n")
+		fmt.Fprintf(&sb, "\n%sDescription:%s\n", blue, reset)
 		for _, dl := range wrapText(info.Description, descW) {
-			fmt.Fprintf(&sb, "%s%s%s", green, dl, reset)
-			sb.WriteString("\n")
+			fmt.Fprintf(&sb, "%s%s\n", indent1, dl)
 		}
 	}
 
@@ -845,6 +872,88 @@ func (app *Gui) clearInlineDesc() {
 	app.state.filters.inlineDesc = ""
 	app.state.filters.inlineDescText = ""
 	app.state.filters.inlineDescLoading = false
+}
+
+// ── Info popup ────────────────────────────────────────────────────────────────
+
+// hideInfoPopupIfVisible dismisses the info popup without changing focus,
+// useful when focus is being moved by another action (e.g. mouse click).
+func (app *Gui) hideInfoPopupIfVisible(g *gocui.Gui) {
+	ipv, err := g.View(viewInfoPopup)
+	if err != nil || !ipv.Visible {
+		return
+	}
+	ipv.Visible = false
+	app.clearRecordInlineDesc()
+	app.clearInlineDesc()
+	app.state.infoPrevView = ""
+	app.state.infoPopupPanel = ""
+}
+
+// openInfoPopup shows the info popup anchored under the selection in sourcePanel.
+func (app *Gui) openInfoPopup(g *gocui.Gui, sourcePanel string) {
+	ipv, err := g.View(viewInfoPopup)
+	if err != nil {
+		return
+	}
+
+	if cv := g.CurrentView(); cv != nil && cv.Name() != viewInfoPopup {
+		app.state.infoPrevView = cv.Name()
+	}
+	app.state.infoPopupPanel = sourcePanel
+
+	ipv.Clear()
+	_ = ipv.SetOrigin(0, 0)
+	ipv.Visible = true
+	app.renderInfoPopup(g)
+	_, _ = g.SetCurrentView(viewInfoPopup)
+	_, _ = g.SetViewOnTop(viewInfoPopup)
+}
+
+// closeInfoPopup hides the info popup and returns focus.
+func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
+	ipv, err := g.View(viewInfoPopup)
+	if err != nil {
+		return nil
+	}
+	ipv.Visible = false
+
+	app.clearRecordInlineDesc()
+	app.clearInlineDesc()
+
+	target := app.state.infoPrevView
+	if target == "" {
+		target = viewRecords
+	}
+	app.state.infoPrevView = ""
+	app.state.infoPopupPanel = ""
+	return app.focusTo(g, target)
+}
+
+// renderInfoPopup updates the content of the info popup based on whichever
+// panel triggered it.
+func (app *Gui) renderInfoPopup(g *gocui.Gui) {
+	ipv, err := g.View(viewInfoPopup)
+	if err != nil || !ipv.Visible {
+		return
+	}
+	ipv.Clear()
+	_ = ipv.SetOrigin(0, 0)
+
+	switch app.state.infoPopupPanel {
+	case viewFilters:
+		if app.state.filters.inlineDescLoading {
+			fmt.Fprint(ipv, "\033[32mloading…\033[0m")
+		} else if app.state.filters.inlineDescText != "" {
+			fmt.Fprint(ipv, app.state.filters.inlineDescText)
+		}
+	case viewRecords:
+		if app.state.recordInfoLoading {
+			fmt.Fprint(ipv, "\033[32mloading…\033[0m")
+		} else if app.state.recordInfoText != "" {
+			fmt.Fprint(ipv, app.state.recordInfoText)
+		}
+	}
 }
 
 // ── Help popup ────────────────────────────────────────────────────────────────

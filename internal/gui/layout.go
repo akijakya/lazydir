@@ -2,6 +2,7 @@ package gui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/jesseduffield/gocui"
 )
@@ -11,10 +12,11 @@ const (
 	viewFilters   = "filters"
 	viewRecords   = "records"
 	viewPreview   = "preview"
-	viewOptions   = "options"  // bottom bar: context keybindings (like lazygit)
-	viewInput     = "input"    // shared editable prompt view, shown on demand
-	viewHelp      = "help"     // ? popup overlay, shown on demand
-	viewCopyMenu  = "copymenu" // copy-options popup, shown on demand
+	viewOptions   = "options"    // bottom bar: context keybindings (like lazygit)
+	viewInput     = "input"      // shared editable prompt view, shown on demand
+	viewHelp      = "help"       // ? popup overlay, shown on demand
+	viewCopyMenu  = "copymenu"   // copy-options popup, shown on demand
+	viewInfoPopup = "infopopup"  // info popup, shown on demand (i key)
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
@@ -247,6 +249,53 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
+	// Info popup — positioned under the selected item in the source panel,
+	// sized dynamically to fit the content.
+	infoW := leftW - 4
+	if infoW < 30 {
+		infoW = 30
+	}
+	infoH := g.infoPopupHeight(panelBottom)
+	ipX0, ipY0, ipX1, ipY1 := 0, -(infoH + 1), infoW, -1
+	if ipv, _ := gui.View(viewInfoPopup); ipv != nil && ipv.Visible {
+		sourceView := viewRecords
+		sourceY0 := recordY0
+		if g.state.infoPopupPanel == viewFilters {
+			sourceView = viewFilters
+			sourceY0 = filtersY0
+		}
+		if sv, svErr := gui.View(sourceView); svErr == nil {
+			_, cy := sv.Cursor()
+			screenY := sourceY0 + 1 + cy
+			ipX0 = 2
+			ipY0 = screenY + 1
+			if ipY0+infoH-1 > panelBottom {
+				ipY0 = screenY - infoH
+			}
+			if ipY0 < 0 {
+				ipY0 = 0
+			}
+			ipX1 = ipX0 + infoW
+			if ipX1 > leftW-1 {
+				ipX1 = leftW - 1
+			}
+			ipY1 = ipY0 + infoH - 1
+			if ipY1 > panelBottom {
+				ipY1 = panelBottom
+			}
+		}
+	}
+	if v, err := gui.SetView(viewInfoPopup, ipX0, ipY0, ipX1, ipY1, 0); err != nil {
+		if !gocui.IsUnknownView(err) {
+			return err
+		}
+		v.Title = " Info "
+		v.Frame = true
+		v.FrameRunes = roundedFrame
+		v.Wrap = true
+		v.Visible = false
+	}
+
 	// First-time init: populate bottom bar and set focus.
 	if gui.CurrentView() == nil {
 		g.renderStatus(gui)
@@ -329,4 +378,47 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 		oasfAddr = "(not configured)"
 	}
 	fmt.Fprintf(v, " \033[32m●\033[0m OASF:      %s\n", oasfAddr)
+}
+
+// infoPopupHeight computes the popup frame height based on the current info
+// content. Returns frame(2) + content lines, clamped between 4 and the
+// available vertical space. The records panel uses a more generous max
+// (3/4 of the screen) so annotation-heavy records can display fully.
+func (g *Gui) infoPopupHeight(panelBottom int) int {
+	const minH = 4
+
+	maxH := panelBottom / 2
+	if g.state.infoPopupPanel == viewRecords {
+		maxH = panelBottom * 3 / 4
+	}
+	if maxH < minH {
+		maxH = minH
+	}
+
+	var text string
+	var loading bool
+	switch g.state.infoPopupPanel {
+	case viewFilters:
+		text = g.state.filters.inlineDescText
+		loading = g.state.filters.inlineDescLoading
+	case viewRecords:
+		text = g.state.recordInfoText
+		loading = g.state.recordInfoLoading
+	}
+
+	contentLines := 1
+	if loading {
+		contentLines = 1
+	} else if text != "" {
+		contentLines = strings.Count(text, "\n") + 1
+	}
+
+	h := contentLines + 2 // +2 for the frame top/bottom
+	if h < minH {
+		h = minH
+	}
+	if h > maxH {
+		h = maxH
+	}
+	return h
 }
