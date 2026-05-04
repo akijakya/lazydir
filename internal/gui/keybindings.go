@@ -826,23 +826,24 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 func formatClassInfo(info *oasf.ClassInfo, descW int, t Theme) string {
 	var sb strings.Builder
 
-	// Taxonomy header + hierarchy tree
-	fmt.Fprintf(&sb, "%sTaxonomy:%s\n", t.Color5, t.Reset)
+	// Taxonomy header + hierarchy tree (first ancestor on the same line)
+	const pad = "           " // len("Taxonomy: ") + 1
+	fmt.Fprintf(&sb, "%sTaxonomy:%s ", t.Color1, t.Reset)
 	ancestors := info.Ancestors
 	for depth, a := range ancestors {
-		prefix := indent1 + strings.Repeat("    ", depth)
+		prefix := strings.Repeat("    ", depth)
 		connector := "└── "
 		if depth == 0 {
 			connector = ""
 		}
-		fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s\n",
+		fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s",
 			prefix, t.Color2, connector, t.Color1, a.Caption, t.Color10, a.ID, t.Reset)
+		sb.WriteString("\n" + pad)
 	}
 
-	selfDepth := len(ancestors)
-	selfPrefix := indent1 + strings.Repeat("    ", selfDepth)
+	selfPrefix := strings.Repeat("    ", len(ancestors))
 	selfConnector := "└── "
-	if selfDepth == 0 {
+	if len(ancestors) == 0 {
 		selfConnector = ""
 	}
 	caption := info.Caption
@@ -852,11 +853,22 @@ func formatClassInfo(info *oasf.ClassInfo, descW int, t Theme) string {
 	fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s",
 		selfPrefix, t.Color2, selfConnector, t.Color1, caption, t.Color10, info.ID, t.Reset)
 
-	// Description
+	// Description (first line on the same line as the label)
 	if info.Description != "" {
-		fmt.Fprintf(&sb, "\n%sDescription:%s\n", t.Color5, t.Reset)
-		for _, dl := range wrapText(info.Description, descW) {
-			fmt.Fprintf(&sb, "%s%s\n", indent1, dl)
+		const descLabel = "Description: "
+		desc := strings.ReplaceAll(info.Description, "\n", " ")
+		desc = strings.Join(strings.Fields(desc), " ")
+		contentW := descW - len(descLabel)
+		if contentW < 10 {
+			contentW = 10
+		}
+		lines := wrapText(desc, contentW)
+		if len(lines) > 0 {
+			descPad := strings.Repeat(" ", len(descLabel))
+			fmt.Fprintf(&sb, "\n%sDescription:%s %s", t.Color5, t.Reset, lines[0])
+			for _, dl := range lines[1:] {
+				fmt.Fprintf(&sb, "\n%s%s", descPad, dl)
+			}
 		}
 	}
 
