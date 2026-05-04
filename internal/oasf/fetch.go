@@ -45,7 +45,12 @@ type Config struct {
 	// ServerAddress is the base URL of the OASF schema server, e.g.
 	// "https://schema.oasf.outshift.com". Protocol is optional.
 	ServerAddress string
+	// Timeout is the HTTP request timeout in seconds. Zero or negative
+	// falls back to the default of 10 seconds.
+	Timeout int
 }
+
+const defaultTimeout = 10
 
 // Client wraps the OASF SDK schema client and caches class info lookups.
 type Client struct {
@@ -79,6 +84,13 @@ func (c *Client) ServerAddress() string {
 	return c.cfg.ServerAddress
 }
 
+func (c *Client) timeout() time.Duration {
+	if c.cfg.Timeout > 0 {
+		return time.Duration(c.cfg.Timeout) * time.Second
+	}
+	return defaultTimeout * time.Second
+}
+
 // Fetch retrieves class info (including ancestors) for a taxonomy class by
 // name. schemaVersion may be empty to use the server default.
 func (c *Client) Fetch(ctx context.Context, classType ClassType, name, schemaVersion string) (*ClassInfo, error) {
@@ -90,7 +102,7 @@ func (c *Client) Fetch(ctx context.Context, classType ClassType, name, schemaVer
 	}
 	c.cacheM.Unlock()
 
-	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 
 	taxonomy, err := c.getTaxonomyVersioned(reqCtx, classType, schemaVersion)
@@ -125,7 +137,7 @@ func (c *Client) Fetch(ctx context.Context, classType ClassType, name, schemaVer
 // FetchAll returns a flat map of name → ClassEntry for every item in the
 // taxonomy of the given type. schemaVersion may be empty to use the default.
 func (c *Client) FetchAll(ctx context.Context, classType ClassType, schemaVersion string) (map[string]ClassEntry, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, c.timeout())
 	defer cancel()
 
 	taxonomy, err := c.getTaxonomyVersioned(reqCtx, classType, schemaVersion)

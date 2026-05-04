@@ -12,8 +12,7 @@ import (
 
 func main() {
 	userCfg := config.Load()
-	cfg := parseFlags()
-	cfg.Theme = userCfg.GUI.Theme
+	cfg := parseFlags(userCfg)
 
 	if err := gui.New(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -21,14 +20,30 @@ func main() {
 	}
 }
 
-func parseFlags() gui.Config {
+func parseFlags(userCfg config.Config) gui.Config {
+	dirAddr := "localhost:8888"
+	if userCfg.Server.DirectoryAddress != "" {
+		dirAddr = userCfg.Server.DirectoryAddress
+	}
+	oasfAddr := oasf.DefaultServerAddress
+	if userCfg.Server.OASFAddress != "" {
+		oasfAddr = userCfg.Server.OASFAddress
+	}
+
 	cfg := gui.Config{
 		Directory: dirclient.Config{
-			ServerAddress: "localhost:8888",
+			ServerAddress: dirAddr,
 		},
 		OASF: oasf.Config{
-			ServerAddress: oasf.DefaultServerAddress,
+			ServerAddress: oasfAddr,
+			Timeout:       userCfg.Server.OASFTimeout,
 		},
+		Theme:              userCfg.GUI.Theme,
+		ScrollStep:         userCfg.GUI.ScrollStep,
+		SplitRatio:         userCfg.GUI.SplitRatio,
+		InputDebounceDelay: userCfg.GUI.InputDebounceDelay,
+		FirstPageSize:      userCfg.Stream.FirstPageSize,
+		BatchSize:          userCfg.Stream.BatchSize,
 	}
 
 	// Honour the environment variables also used by dirctl and the OASF SDK.

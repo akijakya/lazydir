@@ -606,31 +606,42 @@ func (app *Gui) clearRecordInlineDesc() {
 
 // ── Preview panel handlers ────────────────────────────────────────────────────
 
+const defaultScrollStep = 3
+
 func (app *Gui) previewScrollUp(g *gocui.Gui, v *gocui.View) error {
-	return scrollViewUp(g, v)
+	return app.scrollViewUp(v)
 }
 
 func (app *Gui) previewScrollDown(g *gocui.Gui, v *gocui.View) error {
-	return scrollViewDown(g, v)
+	return app.scrollViewDown(v)
 }
 
-func scrollViewUp(_ *gocui.Gui, v *gocui.View) error {
+func (app *Gui) scrollStep() int {
+	if app.cfg.ScrollStep > 0 {
+		return app.cfg.ScrollStep
+	}
+	return defaultScrollStep
+}
+
+func (app *Gui) scrollViewUp(v *gocui.View) error {
 	if v == nil {
 		return nil
 	}
+	step := app.scrollStep()
 	_, oy := v.Origin()
 	if oy > 0 {
-		_ = v.SetOrigin(0, oy-3)
+		_ = v.SetOrigin(0, oy-step)
 	}
 	return nil
 }
 
-func scrollViewDown(_ *gocui.Gui, v *gocui.View) error {
+func (app *Gui) scrollViewDown(v *gocui.View) error {
 	if v == nil {
 		return nil
 	}
+	step := app.scrollStep()
 	_, oy := v.Origin()
-	_ = v.SetOrigin(0, oy+3)
+	_ = v.SetOrigin(0, oy+step)
 	return nil
 }
 

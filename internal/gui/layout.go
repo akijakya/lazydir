@@ -37,7 +37,14 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	bottomY1 := maxY     // y1 for bottom bar views (one past screen, allowed)
 	panelBottom := maxY - 2
 
-	leftW := maxX / 3
+	splitRatio := g.cfg.SplitRatio
+	if splitRatio <= 0 || splitRatio >= 1 {
+		splitRatio = 0.33
+	}
+	leftW := int(float64(maxX) * splitRatio)
+	if leftW < 10 {
+		leftW = 10
+	}
 	rightX0 := leftW
 
 	optionsX1 := maxX - 1
@@ -140,7 +147,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Title = "[2] Filters"
 		v.Frame = true
 		v.Highlight = false
-		v.SelBgColor = gocui.Get256Color(8)
+		v.SelBgColor = g.theme.SelectedRowBg
 		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 	}
@@ -153,7 +160,7 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Title = "[3] Records"
 		v.Frame = true
 		v.Highlight = false
-		v.SelBgColor = gocui.Get256Color(8)
+		v.SelBgColor = g.theme.SelectedRowBg
 		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 	}

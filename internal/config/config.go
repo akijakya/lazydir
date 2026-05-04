@@ -12,28 +12,48 @@ import (
 
 // Config mirrors the YAML structure of ~/.config/lazydir/config.yml.
 type Config struct {
-	GUI GUIConfig `yaml:"gui"`
+	GUI    GUIConfig    `yaml:"gui"`
+	Server ServerConfig `yaml:"server"`
+	Stream StreamConfig `yaml:"stream"`
 }
 
 // GUIConfig groups all visual/TUI settings.
 type GUIConfig struct {
-	Theme ThemeConfig `yaml:"theme"`
+	Theme              ThemeConfig `yaml:"theme"`
+	ScrollStep         int         `yaml:"scrollStep"`
+	SplitRatio         float64     `yaml:"splitRatio"`
+	InputDebounceDelay int         `yaml:"inputDebounceDelay"`
 }
 
 // ThemeConfig lets users override the base16 color palette used throughout the
 // TUI. Each field accepts a color name ("red", "brightCyan", …), a 256-color
 // index ("42"), or a hex true-color value ("#ff8800").
 type ThemeConfig struct {
-	Color1  string `yaml:"color1"`
-	Color2  string `yaml:"color2"`
-	Color3  string `yaml:"color3"`
-	Color4  string `yaml:"color4"`
-	Color5  string `yaml:"color5"`
-	Color6  string `yaml:"color6"`
-	Color7  string `yaml:"color7"`
-	Color8  string `yaml:"color8"`
-	Color9  string `yaml:"color9"`
-	Color10 string `yaml:"color10"`
+	Color1             string `yaml:"color1"`
+	Color2             string `yaml:"color2"`
+	Color3             string `yaml:"color3"`
+	Color4             string `yaml:"color4"`
+	Color5             string `yaml:"color5"`
+	Color6             string `yaml:"color6"`
+	Color7             string `yaml:"color7"`
+	Color8             string `yaml:"color8"`
+	Color9             string `yaml:"color9"`
+	Color10            string `yaml:"color10"`
+	ActiveBorderColor  string `yaml:"activeBorderColor"`
+	SelectedRowBgColor string `yaml:"selectedRowBgColor"`
+}
+
+// ServerConfig holds default server addresses.
+type ServerConfig struct {
+	DirectoryAddress string `yaml:"directoryAddress"`
+	OASFAddress      string `yaml:"oasfAddress"`
+	OASFTimeout      int    `yaml:"oasfTimeout"`
+}
+
+// StreamConfig controls record streaming batch sizes.
+type StreamConfig struct {
+	FirstPageSize int `yaml:"firstPageSize"`
+	BatchSize     int `yaml:"batchSize"`
 }
 
 // Dir returns the lazydir configuration directory, respecting XDG_CONFIG_HOME.

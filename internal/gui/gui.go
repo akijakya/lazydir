@@ -91,9 +91,14 @@ type appState struct {
 
 // Config bundles everything needed to start the GUI.
 type Config struct {
-	Directory dirclient.Config
-	OASF      oasf.Config
-	Theme     config.ThemeConfig
+	Directory          dirclient.Config
+	OASF               oasf.Config
+	Theme              config.ThemeConfig
+	ScrollStep         int
+	SplitRatio         float64
+	InputDebounceDelay int
+	FirstPageSize      int
+	BatchSize          int
 }
 
 // Gui is the top-level lazydir GUI object.
@@ -135,8 +140,8 @@ func New(cfg Config) error {
 
 	app.g = g
 	g.Highlight = true
-	g.SelFgColor = gocui.ColorGreen
-	g.SelFrameColor = gocui.ColorGreen
+	g.SelFgColor = app.theme.ActiveBorderColor
+	g.SelFrameColor = app.theme.ActiveBorderColor
 	g.Mouse = true
 
 	g.SetManagerFunc(app.layout)
@@ -178,6 +183,8 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		if app.state.client != nil {
 			app.state.client.Close()
 		}
+		c.FirstPageSize = app.cfg.FirstPageSize
+		c.BatchSize = app.cfg.BatchSize
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
@@ -372,7 +379,7 @@ func (e *liveInputEditor) Edit(v *gocui.View, key gocui.Key, ch rune, mod gocui.
 	return ret
 }
 
-const inputDebounceDelay = 150 * time.Millisecond
+const defaultInputDebounceDelay = 150
 
 // maybeStartClassEntriesFetch kicks off a background taxonomy fetch for
 // skills/domains/modules when the first schema version is discovered in
@@ -422,7 +429,11 @@ func (app *Gui) scheduleInputChange() {
 	if app.state.inputDebounce != nil {
 		app.state.inputDebounce.Stop()
 	}
-	app.state.inputDebounce = time.AfterFunc(inputDebounceDelay, func() {
+	delay := app.cfg.InputDebounceDelay
+	if delay <= 0 {
+		delay = defaultInputDebounceDelay
+	}
+	app.state.inputDebounce = time.AfterFunc(time.Duration(delay)*time.Millisecond, func() {
 		app.g.Update(func(g *gocui.Gui) error {
 			if app.state.onInputChange == nil {
 				return nil

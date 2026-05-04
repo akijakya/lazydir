@@ -160,7 +160,7 @@ lazydir -s my-dir.example.com:443 \
 
 ## Configuration
 
-`lazydir` reads an optional config file from `~/.config/lazydir/config.yml` (or `config.yaml`). The `XDG_CONFIG_HOME` environment variable is respected.
+`lazydir` reads an optional config file from `~/.config/lazydir/config.yml` (or `config.yaml`). The `XDG_CONFIG_HOME` environment variable is respected. See [`config.example.yml`](config.example.yml) for a complete annotated template.
 
 ### Theme colors
 
@@ -179,17 +179,49 @@ gui:
     color8: "brightYellow"  # trusted filter
     color9: "brightGreen"   # verified filter
     color10: "brightBlack"  # dim/muted text (IDs)
+    activeBorderColor: "green"    # focused panel border + cursor
+    selectedRowBgColor: "8"       # highlighted row background (256-color)
 ```
 
 Accepted value formats:
 
-| Format | Example |
-|--------|---------|
-| Color name | `red`, `brightCyan`, `yellow` |
-| 256-color index | `42`, `208` |
-| Hex true-color | `#ff8800` |
+| Format | Example | Applies to |
+|--------|---------|------------|
+| Color name | `red`, `brightCyan`, `yellow` | all color fields |
+| 256-color index | `42`, `208` | all color fields |
+| Hex true-color | `#ff8800` | `color1`–`color10` only |
 
 Available color names: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `brightBlack`, `brightRed`, `brightGreen`, `brightYellow`, `brightBlue`, `brightMagenta`, `brightCyan`, `brightWhite`.
+
+### GUI options
+
+```yaml
+gui:
+  scrollStep: 3           # lines per scroll keypress (default: 3)
+  splitRatio: 0.33        # left panel width as fraction of terminal (default: 0.33)
+  inputDebounceDelay: 150 # ms before live filter fires (default: 150)
+```
+
+### Server defaults
+
+Config-file defaults for server addresses and timeouts. CLI flags and environment variables still take precedence.
+
+```yaml
+server:
+  directoryAddress: "localhost:8888"
+  oasfAddress: "https://schema.oasf.outshift.com"
+  oasfTimeout: 10  # seconds for OASF HTTP requests (default: 10)
+```
+
+### Stream tuning
+
+Controls how records are batched when streaming from the directory.
+
+```yaml
+stream:
+  firstPageSize: 100  # records in the initial batch (default: 100)
+  batchSize: 50       # records per subsequent batch (default: 50)
+```
 
 ## Architecture
 

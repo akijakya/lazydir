@@ -1,10 +1,14 @@
 package gui
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/akijakya/lazydir/internal/config"
+	"github.com/jesseduffield/gocui"
 )
 
-// Theme holds all ANSI color escape sequences used throughout the TUI.
+// Theme holds all color values used throughout the TUI.
 // Each slot defaults to a base16 terminal color and can be overridden in
 // the config file (~/.config/lazydir/config.yml) under gui.theme.
 type Theme struct {
@@ -19,6 +23,9 @@ type Theme struct {
 	Color9  string // default: bright green — verified filter
 	Color10 string // default: bright black — dim/muted (IDs, gray)
 	Reset   string // ANSI reset sequence
+
+	ActiveBorderColor gocui.Attribute // focused panel border + cursor row foreground
+	SelectedRowBg     gocui.Attribute // highlighted row background in list panels
 }
 
 var defaultTheme = Theme{
@@ -33,6 +40,9 @@ var defaultTheme = Theme{
 	Color9:  "\033[92m",
 	Color10: "\033[90m",
 	Reset:   "\033[0m",
+
+	ActiveBorderColor: gocui.ColorGreen,
+	SelectedRowBg:     gocui.Get256Color(8),
 }
 
 func newTheme(cfg config.ThemeConfig) Theme {
@@ -47,7 +57,41 @@ func newTheme(cfg config.ThemeConfig) Theme {
 	t.Color8 = config.ResolveColor(cfg.Color8, t.Color8)
 	t.Color9 = config.ResolveColor(cfg.Color9, t.Color9)
 	t.Color10 = config.ResolveColor(cfg.Color10, t.Color10)
+	if cfg.ActiveBorderColor != "" {
+		t.ActiveBorderColor = resolveGocuiColor(cfg.ActiveBorderColor, t.ActiveBorderColor)
+	}
+	if cfg.SelectedRowBgColor != "" {
+		t.SelectedRowBg = resolveGocuiColor(cfg.SelectedRowBgColor, t.SelectedRowBg)
+	}
 	return t
+}
+
+func resolveGocuiColor(name string, fallback gocui.Attribute) gocui.Attribute {
+	name = strings.TrimSpace(strings.ToLower(name))
+	switch name {
+	case "black":
+		return gocui.ColorBlack
+	case "red":
+		return gocui.ColorRed
+	case "green":
+		return gocui.ColorGreen
+	case "yellow":
+		return gocui.ColorYellow
+	case "blue":
+		return gocui.ColorBlue
+	case "magenta":
+		return gocui.ColorMagenta
+	case "cyan":
+		return gocui.ColorCyan
+	case "white":
+		return gocui.ColorWhite
+	case "default":
+		return gocui.ColorDefault
+	}
+	if n, err := strconv.Atoi(name); err == nil && n >= 0 && n <= 255 {
+		return gocui.Get256Color(int32(n))
+	}
+	return fallback
 }
 
 // filterColor returns the ANSI color code for a given filter category.

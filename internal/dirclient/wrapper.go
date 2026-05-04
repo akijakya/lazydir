@@ -39,8 +39,10 @@ type RecordSummary struct {
 
 // Client wraps the agntcy/dir gRPC client.
 type Client struct {
-	c      *client.Client
-	Config Config
+	c             *client.Client
+	Config        Config
+	FirstPageSize int
+	BatchSize     int
 }
 
 // Connect creates a new connected client.
@@ -115,28 +117,34 @@ func (q Query) toRPC() *searchv1.RecordQuery {
 	return &searchv1.RecordQuery{Type: t, Value: q.Value}
 }
 
-// FirstPageSize controls how many records are pulled in the initial batch
-// before the loader signals "first page ready" to the caller. After that,
-// remaining records arrive in streamBatchSize chunks.
-const FirstPageSize = 100
+const defaultFirstPageSize = 100
+const defaultBatchSize = 50
 
-// streamBatchSize is the size of the batches delivered after the first page.
-// It exists so the GUI can re-render once per batch instead of once per
-// record, which is the difference between O(N) and O(N²) on large
-// directories. Tuned to be small enough to feel "live" but big enough to
-// keep redraws under control.
-const streamBatchSize = 50
+func (c *Client) firstPageSize() int {
+	if c.FirstPageSize > 0 {
+		return c.FirstPageSize
+	}
+	return defaultFirstPageSize
+}
+
+func (c *Client) batchSize() int {
+	if c.BatchSize > 0 {
+		return c.BatchSize
+	}
+	return defaultBatchSize
+}
 
 // StreamCallbacks bundle the optional notification hooks for Stream. Any of
 // the callbacks may be nil. They are invoked from the goroutine driving the
 // stream — callers must not block inside them.
 type StreamCallbacks struct {
-	// OnFirstPage fires once after the first FirstPageSize records have been
-	// received (or after the stream ends, whichever comes first).
+	// OnFirstPage fires once after the first batch of records has been
+	// received (controlled by Client.FirstPageSize, default 100) or after
+	// the stream ends, whichever comes first.
 	OnFirstPage func(summaries []*RecordSummary)
-	// OnBatch fires for every subsequent batch of streamBatchSize records
-	// (and once at the end with whatever's left over). Batching exists so
-	// callers can amortize per-update work like UI redraws.
+	// OnBatch fires for every subsequent batch of records (controlled by
+	// Client.BatchSize, default 50). Batching exists so callers can
+	// amortize per-update work like UI redraws.
 	OnBatch func(summaries []*RecordSummary)
 	// OnDone fires exactly once when the stream finishes — either cleanly,
 	// because of an error, or because ctx was cancelled. err is nil on a
@@ -146,8 +154,9 @@ type StreamCallbacks struct {
 
 // Stream issues a single SearchRecords RPC with the supplied queries and
 // drains the returned server stream until the server closes it (EOF) or ctx
-// is cancelled. The first FirstPageSize records are delivered via
-// OnFirstPage; remaining records arrive in OnBatch chunks.
+// is cancelled. The first batch of records (sized by Client.FirstPageSize)
+// is delivered via OnFirstPage; remaining records arrive in OnBatch chunks
+// (sized by Client.BatchSize).
 //
 // No limit/offset is set on the RPC — the server decides how many records
 // to return. Once the gRPC stream is exhausted, OnDone(nil) fires.
@@ -159,12 +168,11 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 		rpcQueries = append(rpcQueries, q.toRPC())
 	}
 
-	buf := make([]*RecordSummary, 0, FirstPageSize)
+	fps := c.firstPageSize()
+	bs := c.batchSize()
+	buf := make([]*RecordSummary, 0, fps)
 	firstPageSent := false
 
-	// handOff returns buf and starts a fresh backing array. Callbacks run
-	// on this goroutine but the caller may stash the slice for later
-	// rendering on a different goroutine, so we must not reuse the storage.
 	handOff := func(capHint int) []*RecordSummary {
 		out := buf
 		buf = make([]*RecordSummary, 0, capHint)
@@ -176,7 +184,7 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 			return
 		}
 		firstPageSent = true
-		batch := handOff(streamBatchSize)
+		batch := handOff(bs)
 		if cb.OnFirstPage != nil {
 			cb.OnFirstPage(batch)
 		}
@@ -189,7 +197,7 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 		if len(buf) == 0 {
 			return
 		}
-		batch := handOff(streamBatchSize)
+		batch := handOff(bs)
 		if cb.OnBatch != nil {
 			cb.OnBatch(batch)
 		}
@@ -227,12 +235,12 @@ func (c *Client) Stream(ctx context.Context, queries []Query, cb StreamCallbacks
 			}
 			buf = append(buf, s)
 			if !firstPageSent {
-				if len(buf) >= FirstPageSize {
+				if len(buf) >= fps {
 					flushFirstPage()
 				}
 				continue
 			}
-			if len(buf) >= streamBatchSize {
+			if len(buf) >= bs {
 				flushBatch()
 			}
 		case streamErr := <-result.ErrCh():
