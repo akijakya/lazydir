@@ -12,11 +12,11 @@ const (
 	viewFilters   = "filters"
 	viewRecords   = "records"
 	viewPreview   = "preview"
-	viewOptions   = "options"    // bottom bar: context keybindings (like lazygit)
-	viewInput     = "input"      // shared editable prompt view, shown on demand
-	viewHelp      = "help"       // ? popup overlay, shown on demand
-	viewCopyMenu  = "copymenu"   // copy-options popup, shown on demand
-	viewInfoPopup = "infopopup"  // info popup, shown on demand (i key)
+	viewOptions   = "options"   // bottom bar: context keybindings (like lazygit)
+	viewInput     = "input"     // shared editable prompt view, shown on demand
+	viewHelp      = "help"      // ? popup overlay, shown on demand
+	viewCopyMenu  = "copymenu"  // copy-options popup, shown on demand
+	viewInfoPopup = "infopopup" // info popup, shown on demand (i key)
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
@@ -330,7 +330,7 @@ func (g *Gui) renderStatus(gui *gocui.Gui) {
 
 	if v, err := gui.View(viewOptions); err == nil {
 		v.Clear()
-		fmt.Fprintf(v, "\033[34m%s\033[0m", optionsBarText(focused, v.InnerWidth()))
+		fmt.Fprintf(v, "%s%s%s", g.theme.Color5, optionsBarText(focused, v.InnerWidth()), g.theme.Reset)
 	}
 }
 
@@ -357,9 +357,9 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	}
 	v.Clear()
 
-	dirIcon := "\033[31m○\033[0m"
+	dirIcon := g.theme.Color6 + "○" + g.theme.Reset
 	if g.state.connected {
-		dirIcon = "\033[32m●\033[0m"
+		dirIcon = g.theme.Color4 + "●" + g.theme.Reset
 	}
 
 	sync := ""
@@ -377,7 +377,7 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	if oasfAddr == "" {
 		oasfAddr = "(not configured)"
 	}
-	fmt.Fprintf(v, " \033[32m●\033[0m OASF:      %s\n", oasfAddr)
+	fmt.Fprintf(v, " %s●%s OASF:      %s\n", g.theme.Color4, g.theme.Reset, oasfAddr)
 }
 
 // infoPopupHeight computes the popup frame height based on the current info

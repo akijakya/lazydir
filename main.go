@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/akijakya/lazydir/internal/config"
 	"github.com/akijakya/lazydir/internal/dirclient"
 	"github.com/akijakya/lazydir/internal/gui"
 	"github.com/akijakya/lazydir/internal/oasf"
 )
 
 func main() {
+	userCfg := config.Load()
 	cfg := parseFlags()
+	cfg.Theme = userCfg.GUI.Theme
 
 	if err := gui.New(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

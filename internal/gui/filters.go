@@ -122,12 +122,6 @@ func (c filterCategory) boolean() bool {
 	return c == filterTrusted || c == filterVerified
 }
 
-// isClass reports whether the category maps to an OASF taxonomy class
-// (skills, domains, or modules) that can be enriched with ID/caption.
-func (c filterCategory) isClass() bool {
-	return c == filterSkills || c == filterDomains || c == filterModules
-}
-
 // filterState owns all mutable state for the [2] Filters panel and the set of
 // active filters that the records pane filters against. The map keys are
 // option labels (e.g. skill name, version string, "yes"/"no").

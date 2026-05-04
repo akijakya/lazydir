@@ -46,19 +46,6 @@ func (app *Gui) renderFiltersView(g *gocui.Gui) {
 	app.renderFiltersList(g, v)
 }
 
-// filterCategoryColor maps each filter category to a distinct ANSI color code
-// so that applied selections are visually distinguishable at a glance.
-var filterCategoryColor = map[filterCategory]string{
-	filterSkills:      "\033[33m", // yellow
-	filterDomains:     "\033[36m", // cyan
-	filterModules:     "\033[35m", // magenta
-	filterOASFVersion: "\033[32m", // green
-	filterVersion:     "\033[34m", // blue
-	filterAuthor:      "\033[91m", // bright red
-	filterTrusted:     "\033[93m", // bright yellow
-	filterVerified:    "\033[92m", // bright green
-}
-
 // renderFiltersList draws the unified filter tree: each category has a
 // collapse/expand triangle, child options are indented, and selected options
 // are rendered in the category's color instead of a [ ]/[x] checkbox.
@@ -77,12 +64,6 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 	}
 	if max := len(rows) - 1; max >= 0 && fs.listCursor > max {
 		fs.listCursor = max
-	}
-
-	viewW, _ := v.Size()
-	descW := viewW - len(indent1) - 1
-	if descW < 10 {
-		descW = 10
 	}
 
 	lineNum := 0
@@ -118,20 +99,18 @@ func (app *Gui) renderFiltersList(g *gocui.Gui, v *gocui.View) {
 // when enrichment data is available; other categories show the raw option label.
 // Selected options use the category's color.
 func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]bool) {
-	const reset = "\033[0m"
-
 	entries := app.classEntriesFor(r.category)
 	selected := applied[r.option]
 	color := ""
 	if selected {
-		color = filterCategoryColor[r.category]
+		color = app.theme.filterColor(r.category)
 	}
 
 	if e, ok := entries[r.option]; ok && e.Caption != "" {
 		idStr := fmt.Sprintf("%d", e.ID)
 		caption := e.Caption
 		if color != "" {
-			fmt.Fprintf(v, "%s%s%s %s%s\n", indent1, color, idStr, caption, reset)
+			fmt.Fprintf(v, "%s%s%s %s%s\n", indent1, color, idStr, caption, app.theme.Reset)
 		} else {
 			fmt.Fprintf(v, "%s%s %s\n", indent1, idStr, caption)
 		}
@@ -139,7 +118,7 @@ func (app *Gui) renderFilterOption(v *gocui.View, r listRow, applied map[string]
 	}
 
 	if color != "" {
-		fmt.Fprintf(v, "%s%s%s%s\n", indent1, color, r.option, reset)
+		fmt.Fprintf(v, "%s%s%s%s\n", indent1, color, r.option, app.theme.Reset)
 	} else {
 		fmt.Fprintf(v, "%s%s\n", indent1, r.option)
 	}

@@ -1,0 +1,15 @@
+# lazydir configuration
+# Copy this file to ~/.config/lazydir/config.yml to customize.
+
+gui:
+  theme:
+    color1: "yellow"        # skills, annotations
+    color2: "cyan"          # domains, class tree, accents
+    color3: "magenta"       # modules, timestamps
+    color4: "green"         # connected indicator, OASF version, loading
+    color5: "blue"          # version filter, options bar, section headers
+    color6: "red"           # disconnected indicator
+    color7: "brightRed"     # author filter
+    color8: "brightYellow"  # trusted filter
+    color9: "brightGreen"   # verified filter
+    color10: "brightBlack"  # dim/muted text (IDs)

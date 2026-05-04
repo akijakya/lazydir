@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/akijakya/lazydir/internal/config"
 	"github.com/akijakya/lazydir/internal/dirclient"
 	"github.com/akijakya/lazydir/internal/oasf"
 	"github.com/jesseduffield/gocui"
@@ -92,6 +93,7 @@ type appState struct {
 type Config struct {
 	Directory dirclient.Config
 	OASF      oasf.Config
+	Theme     config.ThemeConfig
 }
 
 // Gui is the top-level lazydir GUI object.
@@ -99,6 +101,7 @@ type Gui struct {
 	g     *gocui.Gui
 	state appState
 	cfg   Config
+	theme Theme
 }
 
 // New creates and starts the lazydir GUI.
@@ -109,7 +112,8 @@ func New(cfg Config) error {
 	}
 
 	app := &Gui{
-		cfg: cfg,
+		cfg:   cfg,
+		theme: newTheme(cfg.Theme),
 		state: appState{
 			serverAddr:   cfg.Directory.ServerAddress,
 			authMode:     cfg.Directory.AuthMode,

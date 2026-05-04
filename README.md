@@ -158,15 +158,51 @@ lazydir -s my-dir.example.com:443 \
 | `?` | Show the full keybinding popup for the focused panel |
 | `wheel` | Scroll (list and preview panels) |
 
+## Configuration
+
+`lazydir` reads an optional config file from `~/.config/lazydir/config.yml` (or `config.yaml`). The `XDG_CONFIG_HOME` environment variable is respected.
+
+### Theme colors
+
+The TUI uses 10 abstract color slots that default to base16 terminal colors. Each slot can be overridden with a color name, a 256-color index, or a hex true-color value:
+
+```yaml
+gui:
+  theme:
+    color1: "yellow"        # skills, annotations
+    color2: "cyan"          # domains, class tree, accents
+    color3: "magenta"       # modules, timestamps
+    color4: "green"         # connected indicator, OASF version, loading
+    color5: "blue"          # version filter, options bar, section headers
+    color6: "red"           # disconnected indicator
+    color7: "brightRed"     # author filter
+    color8: "brightYellow"  # trusted filter
+    color9: "brightGreen"   # verified filter
+    color10: "brightBlack"  # dim/muted text (IDs)
+```
+
+Accepted value formats:
+
+| Format | Example |
+|--------|---------|
+| Color name | `red`, `brightCyan`, `yellow` |
+| 256-color index | `42`, `208` |
+| Hex true-color | `#ff8800` |
+
+Available color names: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `brightBlack`, `brightRed`, `brightGreen`, `brightYellow`, `brightBlue`, `brightMagenta`, `brightCyan`, `brightWhite`.
+
 ## Architecture
 
 ```
 lazydir/
-├── main.go                        # Entry point; flag parsing; program startup
+├── main.go                        # Entry point; flag parsing; config loading
 ├── go.mod / go.sum
 ├── internal/
+│   ├── config/
+│   │   └── config.go              # Config file loading; color name resolution
 │   ├── gui/
 │   │   ├── gui.go                 # Top-level Gui struct; gocui init; async helpers
+│   │   ├── theme.go               # Color palette (Theme); defaults; config integration
 │   │   ├── layout.go              # Panel layout; frame drawing; status bar
 │   │   ├── views.go               # Render functions for filters, records, and preview
 │   │   ├── keybindings.go         # Key handlers; focus cycling; panel actions

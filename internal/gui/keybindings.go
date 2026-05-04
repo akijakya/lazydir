@@ -555,7 +555,7 @@ func (app *Gui) fetchRecordInfo(cid string) {
 		if err != nil {
 			app.state.recordInfoText = err.Error()
 		} else {
-			app.state.recordInfoText = formatRecordInfo(info)
+			app.state.recordInfoText = formatRecordInfo(info, app.theme)
 		}
 		app.renderInfoPopup(g)
 		return nil
@@ -564,19 +564,12 @@ func (app *Gui) fetchRecordInfo(cid string) {
 
 // formatRecordInfo renders a RecordInfo as colored, human-readable lines.
 // The CID is omitted here because it's already shown in the preview panel title.
-func formatRecordInfo(info *dirclient.RecordInfo) string {
-	const (
-		yellow  = "\033[33m"
-		green   = "\033[32m"
-		magenta = "\033[35m"
-		reset   = "\033[0m"
-	)
-
+func formatRecordInfo(info *dirclient.RecordInfo, t Theme) string {
 	var sb strings.Builder
 	first := true
 
 	if len(info.Annotations) > 0 {
-		fmt.Fprintf(&sb, "%sAnnotations:%s", yellow, reset)
+		fmt.Fprintf(&sb, "%sAnnotations:%s", t.Color1, t.Reset)
 		first = false
 		keys := make([]string, 0, len(info.Annotations))
 		for k := range info.Annotations {
@@ -584,7 +577,7 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			fmt.Fprintf(&sb, "\n%s%s%s:%s %s", indent1, yellow, k, reset, info.Annotations[k])
+			fmt.Fprintf(&sb, "\n%s%s%s:%s %s", indent1, t.Color1, k, t.Reset, info.Annotations[k])
 		}
 	}
 
@@ -592,14 +585,14 @@ func formatRecordInfo(info *dirclient.RecordInfo) string {
 		if !first {
 			sb.WriteString("\n")
 		}
-		fmt.Fprintf(&sb, "%sSchema version:%s %s", green, reset, info.SchemaVersion)
+		fmt.Fprintf(&sb, "%sSchema version:%s %s", t.Color4, t.Reset, info.SchemaVersion)
 		first = false
 	}
 	if info.CreatedAt != "" {
 		if !first {
 			sb.WriteString("\n")
 		}
-		fmt.Fprintf(&sb, "%sCreated at:%s %s", magenta, reset, info.CreatedAt)
+		fmt.Fprintf(&sb, "%sCreated at:%s %s", t.Color3, t.Reset, info.CreatedAt)
 	}
 
 	return sb.String()
@@ -810,7 +803,7 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 					descW = 20
 				}
 			}
-			app.state.filters.inlineDescText = formatClassInfo(info, descW)
+			app.state.filters.inlineDescText = formatClassInfo(info, descW, app.theme)
 		}
 		app.renderInfoPopup(g)
 		return nil
@@ -819,19 +812,11 @@ func (app *Gui) fetchInlineDesc(ct oasf.ClassType, name string) {
 
 // formatClassInfo produces a pre-formatted, ANSI-colored text block showing
 // the class hierarchy tree and description, similar to record info display.
-func formatClassInfo(info *oasf.ClassInfo, descW int) string {
-	const (
-		cyan  = "\033[36m"
-		blue  = "\033[34m"
-		yel   = "\033[33m"
-		dim   = "\033[90m"
-		reset = "\033[0m"
-	)
-
+func formatClassInfo(info *oasf.ClassInfo, descW int, t Theme) string {
 	var sb strings.Builder
 
 	// Taxonomy header + hierarchy tree
-	fmt.Fprintf(&sb, "%sTaxonomy:%s\n", blue, reset)
+	fmt.Fprintf(&sb, "%sTaxonomy:%s\n", t.Color5, t.Reset)
 	ancestors := info.Ancestors
 	for depth, a := range ancestors {
 		prefix := indent1 + strings.Repeat("    ", depth)
@@ -840,7 +825,7 @@ func formatClassInfo(info *oasf.ClassInfo, descW int) string {
 			connector = ""
 		}
 		fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s\n",
-			prefix, cyan, connector, yel, a.Caption, dim, a.ID, reset)
+			prefix, t.Color2, connector, t.Color1, a.Caption, t.Color10, a.ID, t.Reset)
 	}
 
 	selfDepth := len(ancestors)
@@ -854,11 +839,11 @@ func formatClassInfo(info *oasf.ClassInfo, descW int) string {
 		caption = info.Name
 	}
 	fmt.Fprintf(&sb, "%s%s%s%s%s %s(%d)%s",
-		selfPrefix, cyan, selfConnector, yel, caption, dim, info.ID, reset)
+		selfPrefix, t.Color2, selfConnector, t.Color1, caption, t.Color10, info.ID, t.Reset)
 
 	// Description
 	if info.Description != "" {
-		fmt.Fprintf(&sb, "\n%sDescription:%s\n", blue, reset)
+		fmt.Fprintf(&sb, "\n%sDescription:%s\n", t.Color5, t.Reset)
 		for _, dl := range wrapText(info.Description, descW) {
 			fmt.Fprintf(&sb, "%s%s\n", indent1, dl)
 		}
@@ -943,13 +928,13 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 	switch app.state.infoPopupPanel {
 	case viewFilters:
 		if app.state.filters.inlineDescLoading {
-			fmt.Fprint(ipv, "\033[32mloading…\033[0m")
+			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
 		} else if app.state.filters.inlineDescText != "" {
 			fmt.Fprint(ipv, app.state.filters.inlineDescText)
 		}
 	case viewRecords:
 		if app.state.recordInfoLoading {
-			fmt.Fprint(ipv, "\033[32mloading…\033[0m")
+			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
 		} else if app.state.recordInfoText != "" {
 			fmt.Fprint(ipv, app.state.recordInfoText)
 		}
@@ -1015,8 +1000,8 @@ func (app *Gui) openCopyMenu(g *gocui.Gui, v *gocui.View) error {
 	}
 
 	cv.Clear()
-	fmt.Fprintln(cv, "  \033[36mc\033[0m  copy CID")
-	fmt.Fprintf(cv, "  \033[36ma\033[0m  copy record JSON")
+	fmt.Fprintf(cv, "  %sc%s  copy CID\n", app.theme.Color2, app.theme.Reset)
+	fmt.Fprintf(cv, "  %sa%s  copy record JSON", app.theme.Color2, app.theme.Reset)
 
 	cv.Visible = true
 	_, _ = g.SetCurrentView(viewCopyMenu)
