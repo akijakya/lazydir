@@ -20,8 +20,13 @@ gui:
   inputDebounceDelay: 150         # ms before live filter fires
 
 server:
-  directoryAddress: "localhost:8888"
-  oasfAddress: "https://schema.oasf.outshift.com"
+  directoryServers:               # predefined servers shown in popup (first = default)
+    - address: "localhost:8888"
+    # - address: "dir.example.com:443"
+    #   oidcIssuer: "https://auth.example.com"
+    #   oidcClientID: "lazydir"
+  oasfServers:                    # predefined OASF servers (first = default)
+    - "https://schema.oasf.outshift.com"
   oasfTimeout: 10                 # seconds for OASF HTTP requests
 
 stream:

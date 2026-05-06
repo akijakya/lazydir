@@ -12,6 +12,18 @@ import (
 	"github.com/jesseduffield/gocui"
 )
 
+// connStatus describes the connectivity state of a remote service (Directory
+// or OASF). A single field per connection replaces the previous boolean
+// combinations (connected/connectFailed/pinging).
+type connStatus int
+
+const (
+	connIdle   connStatus = iota // not yet attempted (gray ○)
+	connTrying                   // check in progress (gray ○ + ↻)
+	connOK                       // confirmed working (green ●)
+	connFailed                   // confirmed broken (red ●)
+)
+
 // streamState describes the lifecycle phase of the records stream.
 type streamState int
 
@@ -26,15 +38,36 @@ const (
 // appState holds all mutable application state. Fields are only mutated on
 // the GUI goroutine (inside g.Update callbacks or key handlers).
 type appState struct {
+	// Connections panel cursor (0 = Directory, 1 = OASF)
+	connCursor int
+
 	// Directory connection
-	serverAddr string
-	authMode   string
-	connected  bool
-	client     *dirclient.Client
+	activeDir        config.DirectoryEntry
+	serverAddr       string
+	authMode         string
+	dirStatus        connStatus
+	dirLastConnected time.Time
+	dirError         string
+	dirLastCfg       *dirclient.Config
+	client           *dirclient.Client
+	dirReconnStop    chan struct{}
 
 	// OASF connection
-	oasfAddr   string
-	oasfClient *oasf.Client
+	oasfAddr          string
+	oasfClient        *oasf.Client
+	oasfStatus        connStatus
+	oasfLastConnected time.Time
+	oasfError         string
+	oasfReconnStop    chan struct{}
+
+	// Server selection popup state
+	serverMenuVisible  bool
+	serverMenuItems    []string
+	serverMenuCursor   int
+	serverMenuPrevView string
+
+	// Auth popup content line count (for dynamic sizing)
+	authPopupLines int
 
 	// records: server already filtered them; we render this slice directly
 	// (after the optional name query in filterQuery is applied).
@@ -93,6 +126,8 @@ type appState struct {
 type Config struct {
 	Directory          dirclient.Config
 	OASF               oasf.Config
+	DirectoryServers   []config.DirectoryEntry
+	OASFServers        []string
 	Theme              config.ThemeConfig
 	ScrollStep         int
 	SplitRatio         float64
@@ -116,10 +151,16 @@ func New(cfg Config) error {
 		return fmt.Errorf("configuring OASF client: %w", err)
 	}
 
+	initialDir := config.DirectoryEntry{Address: cfg.Directory.ServerAddress}
+	if len(cfg.DirectoryServers) > 0 {
+		initialDir = cfg.DirectoryServers[0]
+	}
+
 	app := &Gui{
 		cfg:   cfg,
 		theme: newTheme(cfg.Theme),
 		state: appState{
+			activeDir:    initialDir,
 			serverAddr:   cfg.Directory.ServerAddress,
 			authMode:     cfg.Directory.AuthMode,
 			oasfAddr:     cfg.OASF.ServerAddress,
@@ -150,8 +191,19 @@ func New(cfg Config) error {
 		return fmt.Errorf("binding keys: %w", err)
 	}
 
-	// Kick off the initial directory connection in the background.
-	go app.connect(cfg.Directory)
+	// Kick off the initial connections in the background.
+	app.state.dirStatus = connTrying
+	if initialDir.OIDCIssuer != "" {
+		go app.connectWithOIDC(initialDir)
+	} else {
+		dirCfg := cfg.Directory
+		if dirCfg.AuthMode == "" {
+			dirCfg.AuthMode = "insecure"
+		}
+		go app.connect(dirCfg)
+	}
+	app.state.oasfStatus = connTrying
+	go app.pingOASF(oasfClient)
 
 	if err := g.MainLoop(); err != nil && !gocui.IsQuit(err) {
 		return fmt.Errorf("main loop: %w", err)
@@ -166,20 +218,21 @@ func (app *Gui) connect(cfg dirclient.Config) {
 	c, err := dirclient.Connect(ctx, cfg)
 	if err != nil {
 		app.g.Update(func(g *gocui.Gui) error {
-			app.state.connected = false
+			app.state.dirStatus = connFailed
+			app.state.dirError = err.Error()
+			app.state.dirLastCfg = &cfg
+			app.state.stream = streamIdle
 			app.renderDirectory(g)
 			app.renderStatus(g)
-			app.renderPreviewText(g, "Connection failed", err.Error())
+			app.openInfoPopup(g, viewDirectory)
+			app.startReconnectLoop()
 			return nil
 		})
 		return
 	}
 
-	// Install the client and kick off the initial unfiltered stream in a
-	// single Update callback. Splitting them into two would be racy: the
-	// scheduler may run the second before the first, and startRecordsStream
-	// would then see a nil client and silently no-op.
 	app.g.Update(func(g *gocui.Gui) error {
+		app.stopReconnectLoop()
 		if app.state.client != nil {
 			app.state.client.Close()
 		}
@@ -188,12 +241,193 @@ func (app *Gui) connect(cfg dirclient.Config) {
 		app.state.client = c
 		app.state.serverAddr = cfg.ServerAddress
 		app.state.authMode = cfg.AuthMode
-		app.state.connected = true
+		app.state.dirLastCfg = &cfg
+		app.state.dirStatus = connTrying
 		app.state.filters = newFilterState()
 		app.state.filterQuery = ""
 		app.renderDirectory(g)
 		app.renderStatus(g)
 		app.startRecordsStream()
+		return nil
+	})
+}
+
+// ── Connection health loops ──────────────────────────────────────────────────
+//
+// Both Directory and OASF use the same pattern: ping periodically (5s when
+// healthy, 1s when failed), update state, and — for Directory — trigger a
+// full reconnect on failure.
+
+const (
+	retryInterval  = 1 * time.Second
+	healthInterval = 5 * time.Second
+	pingTimeout    = 3 * time.Second
+)
+
+// startReconnectLoop starts the Directory health/reconnect loop.
+func (app *Gui) startReconnectLoop() {
+	if app.state.dirReconnStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	app.state.dirReconnStop = stop
+	go app.dirHealthLoop(stop)
+}
+
+func (app *Gui) stopReconnectLoop() {
+	if app.state.dirReconnStop != nil {
+		close(app.state.dirReconnStop)
+		app.state.dirReconnStop = nil
+	}
+}
+
+func (app *Gui) dirHealthLoop(stop chan struct{}) {
+	ticker := time.NewTicker(retryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			action := make(chan int, 1) // 0=skip, 1=reconnect, 2=ping
+			var cfg *dirclient.Config
+			var client *dirclient.Client
+
+			app.g.Update(func(g *gocui.Gui) error {
+				switch app.state.dirStatus {
+				case connFailed:
+					if app.state.dirLastCfg == nil {
+						action <- 0
+						return nil
+					}
+					cfg = app.state.dirLastCfg
+					action <- 1
+				case connOK:
+					client = app.state.client
+					if client == nil {
+						action <- 0
+						return nil
+					}
+					action <- 2
+				default:
+					action <- 0
+				}
+				return nil
+			})
+
+			switch <-action {
+			case 0:
+				ticker.Reset(healthInterval)
+			case 1:
+				app.g.Update(func(g *gocui.Gui) error {
+					app.state.dirReconnStop = nil
+					return nil
+				})
+				app.connect(*cfg)
+				return
+			case 2:
+				ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+				err := client.Ping(ctx)
+				cancel()
+				if err != nil {
+					app.g.Update(func(g *gocui.Gui) error {
+						if app.state.client != client {
+							return nil
+						}
+						app.state.dirStatus = connFailed
+						app.state.dirError = err.Error()
+						app.renderDirectory(g)
+						return nil
+					})
+					ticker.Reset(retryInterval)
+				} else {
+					ticker.Reset(healthInterval)
+				}
+			}
+		}
+	}
+}
+
+// startOASFReconnectLoop starts the OASF health/reconnect loop.
+func (app *Gui) startOASFReconnectLoop() {
+	if app.state.oasfReconnStop != nil {
+		return
+	}
+	stop := make(chan struct{})
+	app.state.oasfReconnStop = stop
+	go app.oasfHealthLoop(stop)
+}
+
+func (app *Gui) stopOASFReconnectLoop() {
+	if app.state.oasfReconnStop != nil {
+		close(app.state.oasfReconnStop)
+		app.state.oasfReconnStop = nil
+	}
+}
+
+func (app *Gui) oasfHealthLoop(stop chan struct{}) {
+	interval := healthInterval
+	if app.state.oasfStatus == connFailed {
+		interval = retryInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			client := app.state.oasfClient
+			if client == nil {
+				return
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+			err := client.Ping(ctx)
+			cancel()
+
+			app.g.Update(func(g *gocui.Gui) error {
+				if app.state.oasfClient != client {
+					return nil
+				}
+				if err == nil {
+					app.state.oasfStatus = connOK
+					app.state.oasfLastConnected = time.Now()
+					app.state.oasfError = ""
+					ticker.Reset(healthInterval)
+				} else {
+					app.state.oasfStatus = connFailed
+					app.state.oasfError = err.Error()
+					ticker.Reset(retryInterval)
+				}
+				app.renderDirectory(g)
+				return nil
+			})
+		}
+	}
+}
+
+// pingOASF does the initial OASF connectivity check and starts the health loop.
+func (app *Gui) pingOASF(client *oasf.Client) {
+	if client == nil {
+		return
+	}
+	err := client.Ping(context.Background())
+	app.g.Update(func(g *gocui.Gui) error {
+		if app.state.oasfClient != client {
+			return nil
+		}
+		if err == nil {
+			app.state.oasfStatus = connOK
+			app.state.oasfLastConnected = time.Now()
+			app.state.oasfError = ""
+		} else {
+			app.state.oasfStatus = connFailed
+			app.state.oasfError = err.Error()
+		}
+		app.renderDirectory(g)
+		app.startOASFReconnectLoop()
 		return nil
 	})
 }
@@ -235,6 +469,14 @@ func (app *Gui) startRecordsStream() {
 				if ctx.Err() != nil {
 					return nil
 				}
+				if len(summaries) > 0 {
+					app.state.dirStatus = connOK
+					app.state.dirLastConnected = time.Now()
+					app.state.dirError = ""
+					if app.state.infoPopupPanel == viewDirectory {
+						app.closeInfoPopup(g, nil)
+					}
+				}
 				app.state.records = append(app.state.records, summaries...)
 				for _, r := range summaries {
 					app.state.filterValues.add(r)
@@ -244,6 +486,7 @@ func (app *Gui) startRecordsStream() {
 				app.applyNameFilter()
 				app.renderRecordsView(g)
 				app.renderFiltersView(g)
+				app.renderDirectory(g)
 				app.autoPreviewRecord(g)
 				return nil
 			})
@@ -271,9 +514,13 @@ func (app *Gui) startRecordsStream() {
 				if err != nil {
 					app.state.stream = streamErrored
 					app.state.streamErr = err.Error()
-					app.renderPreviewText(g, "Stream error", err.Error())
+					app.state.dirStatus = connFailed
+					app.state.dirError = err.Error()
+					app.renderDirectory(g)
+					app.startReconnectLoop()
 				} else {
 					app.state.stream = streamDone
+					app.startReconnectLoop()
 				}
 				app.renderRecordsView(g)
 				app.renderDirectory(g)
@@ -327,7 +574,7 @@ func (app *Gui) openInput(title, initialValue string, onConfirm func(string), on
 	if onChange != nil {
 		iv.Editor = &liveInputEditor{gui: app}
 	} else {
-		iv.Editor = nil
+		iv.Editor = gocui.DefaultEditor
 	}
 
 	iv.Title = title

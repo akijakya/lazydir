@@ -43,11 +43,53 @@ type ThemeConfig struct {
 	SelectedRowBgColor string `yaml:"selectedRowBgColor"`
 }
 
-// ServerConfig holds default server addresses.
+// DirectoryEntry describes a predefined directory server.
+type DirectoryEntry struct {
+	Address      string `yaml:"address"`
+	OIDCIssuer   string `yaml:"oidcIssuer"`
+	OIDCClientID string `yaml:"oidcClientID"`
+}
+
+// Label returns a human-readable label for display in the server popup.
+func (e DirectoryEntry) Label() string {
+	return e.Address
+}
+
+// ServerConfig holds server addresses. Each list may contain multiple
+// predefined servers the user can switch between in the TUI; the first
+// entry in each list is used as the initial/default connection target.
 type ServerConfig struct {
+	DirectoryServers []DirectoryEntry `yaml:"directoryServers"`
+	OASFServers      []string         `yaml:"oasfServers"`
+	OASFTimeout      int              `yaml:"oasfTimeout"`
+
+	// Deprecated single-address fields kept for backward compatibility.
 	DirectoryAddress string `yaml:"directoryAddress"`
 	OASFAddress      string `yaml:"oasfAddress"`
-	OASFTimeout      int    `yaml:"oasfTimeout"`
+}
+
+// ResolveDirectoryServers returns the effective directory server list,
+// promoting the deprecated single-address field if the list is empty.
+func (s ServerConfig) ResolveDirectoryServers() []DirectoryEntry {
+	if len(s.DirectoryServers) > 0 {
+		return s.DirectoryServers
+	}
+	if s.DirectoryAddress != "" {
+		return []DirectoryEntry{{Address: s.DirectoryAddress}}
+	}
+	return nil
+}
+
+// ResolveOASFServers returns the effective OASF server list, promoting
+// the deprecated single-address field if the list is empty.
+func (s ServerConfig) ResolveOASFServers() []string {
+	if len(s.OASFServers) > 0 {
+		return s.OASFServers
+	}
+	if s.OASFAddress != "" {
+		return []string{s.OASFAddress}
+	}
+	return nil
 }
 
 // StreamConfig controls record streaming batch sizes.

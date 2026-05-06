@@ -32,8 +32,9 @@ var perPanelBindings = map[string]panelBindings{
 	viewDirectory: {
 		title: "[1] Connections",
 		bindings: []binding{
-			{"c", "connect to directory", true},
-			{"o", "connect to OASF server", true},
+			{"↑↓ / j k", "navigate", true},
+			{"c / enter", "select server", true},
+			{"i", "connection info", true},
 		},
 	},
 	viewFilters: {

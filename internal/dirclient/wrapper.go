@@ -21,6 +21,8 @@ type Config struct {
 	TLSCertFile   string
 	TLSKeyFile    string
 	AuthToken     string
+	OIDCIssuer    string
+	OIDCClientID  string
 }
 
 // RecordSummary is a lightweight representation of a directory record. It
@@ -55,6 +57,8 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 		TlsCertFile:   cfg.TLSCertFile,
 		TlsKeyFile:    cfg.TLSKeyFile,
 		AuthToken:     cfg.AuthToken,
+		OIDCIssuer:    cfg.OIDCIssuer,
+		OIDCClientID:  cfg.OIDCClientID,
 	}
 
 	c, err := client.New(ctx, client.WithConfig(dirCfg))
@@ -69,6 +73,28 @@ func Connect(ctx context.Context, cfg Config) (*Client, error) {
 func (c *Client) Close() {
 	if c.c != nil {
 		_ = c.c.Close()
+	}
+}
+
+// Ping verifies the server is reachable by issuing a minimal search RPC.
+func (c *Client) Ping(ctx context.Context) error {
+	req := &searchv1.SearchRecordsRequest{}
+	result, err := c.c.SearchRecords(ctx, req)
+	if err != nil {
+		return err
+	}
+	// Drain and discard immediately.
+	go func() {
+		for range result.ResCh() {
+		}
+	}()
+	select {
+	case err := <-result.ErrCh():
+		return err
+	case <-result.DoneCh():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

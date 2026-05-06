@@ -21,23 +21,27 @@ func main() {
 }
 
 func parseFlags(userCfg config.Config) gui.Config {
-	dirAddr := "localhost:8888"
-	if userCfg.Server.DirectoryAddress != "" {
-		dirAddr = userCfg.Server.DirectoryAddress
+	dirServers := userCfg.Server.ResolveDirectoryServers()
+	if len(dirServers) == 0 {
+		dirServers = []config.DirectoryEntry{{Address: "localhost:8888"}}
 	}
-	oasfAddr := oasf.DefaultServerAddress
-	if userCfg.Server.OASFAddress != "" {
-		oasfAddr = userCfg.Server.OASFAddress
+	oasfServers := userCfg.Server.ResolveOASFServers()
+	if len(oasfServers) == 0 {
+		oasfServers = []string{oasf.DefaultServerAddress}
 	}
 
 	cfg := gui.Config{
 		Directory: dirclient.Config{
-			ServerAddress: dirAddr,
+			ServerAddress: dirServers[0].Address,
+			OIDCIssuer:    dirServers[0].OIDCIssuer,
+			OIDCClientID:  dirServers[0].OIDCClientID,
 		},
 		OASF: oasf.Config{
-			ServerAddress: oasfAddr,
+			ServerAddress: oasfServers[0],
 			Timeout:       userCfg.Server.OASFTimeout,
 		},
+		DirectoryServers:   dirServers,
+		OASFServers:        oasfServers,
 		Theme:              userCfg.GUI.Theme,
 		ScrollStep:         userCfg.GUI.ScrollStep,
 		SplitRatio:         userCfg.GUI.SplitRatio,

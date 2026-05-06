@@ -204,14 +204,21 @@ gui:
 
 ### Server defaults
 
-Config-file defaults for server addresses and timeouts. CLI flags and environment variables still take precedence.
+Config-file defaults for server addresses and timeouts. CLI flags and environment variables still take precedence. Multiple predefined servers can be listed; the first entry is used as the default, and all entries appear in the in-app server selection popup.
 
 ```yaml
 server:
-  directoryAddress: "localhost:8888"
-  oasfAddress: "https://schema.oasf.outshift.com"
+  directoryServers:
+    - address: "localhost:8888"
+    - address: "dir.example.com:443"
+      oidcIssuer: "https://auth.example.com"
+      oidcClientID: "lazydir"
+  oasfServers:
+    - "https://schema.oasf.outshift.com"
   oasfTimeout: 10  # seconds for OASF HTTP requests (default: 10)
 ```
+
+Servers with `oidcIssuer` and `oidcClientID` trigger an OIDC device-flow login when no cached token is available. The TUI displays the authorization URL and code inline.
 
 ### Stream tuning
 

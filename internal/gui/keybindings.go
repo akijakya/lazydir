@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/akijakya/lazydir/internal/config"
 	"github.com/akijakya/lazydir/internal/dirclient"
 	"github.com/akijakya/lazydir/internal/oasf"
 	"github.com/jesseduffield/gocui"
@@ -57,10 +58,58 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Connections panel ────────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewDirectory, 'c', gocui.ModNone, app.openConnectDialog); err != nil {
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewDirectory, key, gocui.ModNone, app.connCursorUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewDirectory, key, gocui.ModNone, app.connCursorDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewDirectory, 'c', gocui.ModNone, app.openServerSelectPopup); err != nil {
 		return err
 	}
-	if err := g.SetKeybinding(viewDirectory, 'o', gocui.ModNone, app.openOASFDialog); err != nil {
+	if err := g.SetKeybinding(viewDirectory, gocui.KeyEnter, gocui.ModNone, app.openServerSelectPopup); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewDirectory, 'i', gocui.ModNone, app.connToggleInfo); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewDirectory, gocui.KeyEsc, gocui.ModNone, app.connDismissInfo); err != nil {
+		return err
+	}
+
+	// ── Server selection popup ──────────────────────────────────────────────
+	for _, key := range []interface{}{gocui.KeyArrowUp, 'k'} {
+		if err := g.SetKeybinding(viewServerMenu, key, gocui.ModNone, app.serverMenuUp); err != nil {
+			return err
+		}
+	}
+	for _, key := range []interface{}{gocui.KeyArrowDown, 'j'} {
+		if err := g.SetKeybinding(viewServerMenu, key, gocui.ModNone, app.serverMenuDown); err != nil {
+			return err
+		}
+	}
+	if err := g.SetKeybinding(viewServerMenu, gocui.KeyEnter, gocui.ModNone, app.serverMenuSelect); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewServerMenu, gocui.KeyEsc, gocui.ModNone, app.serverMenuClose); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewServerMenu, 'q', gocui.ModNone, app.serverMenuClose); err != nil {
+		return err
+	}
+
+	// ── Auth/error popup ────────────────────────────────────────────────────
+	if err := g.SetKeybinding(viewAuthPopup, gocui.KeyEsc, gocui.ModNone, app.dismissAuthPopup); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewAuthPopup, gocui.KeyEnter, gocui.ModNone, app.dismissAuthPopup); err != nil {
+		return err
+	}
+	if err := g.SetKeybinding(viewAuthPopup, 'q', gocui.ModNone, app.dismissAuthPopup); err != nil {
 		return err
 	}
 
@@ -119,12 +168,6 @@ func (app *Gui) bindKeys(g *gocui.Gui) error {
 	}
 
 	// ── Info popup ──────────────────────────────────────────────────────────
-	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyEsc, gocui.ModNone, app.closeInfoPopup); err != nil {
-		return err
-	}
-	if err := g.SetKeybinding(viewInfoPopup, 'i', gocui.ModNone, app.closeInfoPopup); err != nil {
-		return err
-	}
 	if err := g.SetKeybinding(viewInfoPopup, gocui.KeyCtrlC, gocui.ModNone, quit); err != nil {
 		return err
 	}
@@ -647,22 +690,372 @@ func (app *Gui) scrollViewDown(v *gocui.View) error {
 
 // ── Connections: directory and OASF server dialogs ────────────────────────────
 
+// ── Connections panel cursor ──────────────────────────────────────────────────
+
+func (app *Gui) connCursorUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.connCursor > 0 {
+		app.state.connCursor--
+		app.renderDirectory(g)
+	}
+	return nil
+}
+
+func (app *Gui) connCursorDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.connCursor < 1 {
+		app.state.connCursor++
+		app.renderDirectory(g)
+	}
+	return nil
+}
+
+func (app *Gui) connToggleInfo(g *gocui.Gui, v *gocui.View) error {
+	if app.state.infoPopupPanel == viewDirectory {
+		return app.closeInfoPopup(g, v)
+	}
+	app.openInfoPopup(g, viewDirectory)
+	return nil
+}
+
+func (app *Gui) connDismissInfo(g *gocui.Gui, v *gocui.View) error {
+	if app.state.infoPopupPanel == viewDirectory {
+		return app.closeInfoPopup(g, v)
+	}
+	return nil
+}
+
+// connInfoText builds the info popup content for the selected connection row.
+// Returns the text and whether an error is present.
+func (app *Gui) connInfoText() (string, bool) {
+	var sb strings.Builder
+	hasError := false
+	if app.state.connCursor == 0 {
+		fmt.Fprintf(&sb, "Server:  %s\n", app.state.serverAddr)
+		if app.state.activeDir.OIDCIssuer != "" {
+			fmt.Fprintf(&sb, "Auth:    oidc (%s)\n", app.state.activeDir.OIDCIssuer)
+		} else if app.state.authMode != "" {
+			fmt.Fprintf(&sb, "Auth:    %s\n", app.state.authMode)
+		} else {
+			sb.WriteString("Auth:    insecure\n")
+		}
+		if !app.state.dirLastConnected.IsZero() {
+			fmt.Fprintf(&sb, "Connected: %s\n", app.state.dirLastConnected.Format("15:04:05"))
+		}
+		if app.state.dirError != "" {
+			fmt.Fprintf(&sb, "\nError: %s\n", app.state.dirError)
+			hasError = true
+		}
+	} else {
+		fmt.Fprintf(&sb, "Server:  %s\n", app.state.oasfAddr)
+		if !app.state.oasfLastConnected.IsZero() {
+			fmt.Fprintf(&sb, "Connected: %s\n", app.state.oasfLastConnected.Format("15:04:05"))
+		}
+		if app.state.oasfError != "" {
+			fmt.Fprintf(&sb, "\nError: %s\n", app.state.oasfError)
+			hasError = true
+		}
+	}
+	return sb.String(), hasError
+}
+
+// ── Server selection popup ───────────────────────────────────────────────────
+
+func (app *Gui) openServerSelectPopup(g *gocui.Gui, v *gocui.View) error {
+	var items []string
+	if app.state.connCursor == 0 {
+		for _, entry := range app.cfg.DirectoryServers {
+			label := entry.Address
+			if entry.OIDCIssuer != "" {
+				label += " (oidc)"
+			}
+			items = append(items, label)
+		}
+	} else {
+		items = append(items, app.cfg.OASFServers...)
+	}
+	items = append(items, "Custom...")
+
+	app.state.serverMenuItems = items
+	app.state.serverMenuCursor = 0
+	app.state.serverMenuVisible = true
+	app.state.serverMenuPrevView = viewDirectory
+
+	smv, err := g.View(viewServerMenu)
+	if err == nil {
+		smv.Visible = true
+		smv.Clear()
+		for _, item := range items {
+			fmt.Fprintln(smv, " "+item)
+		}
+		_ = smv.SetCursor(0, 0)
+	}
+	_, _ = g.SetCurrentView(viewServerMenu)
+	_, _ = g.SetViewOnTop(viewServerMenu)
+	return nil
+}
+
+func (app *Gui) serverMenuUp(g *gocui.Gui, v *gocui.View) error {
+	if app.state.serverMenuCursor > 0 {
+		app.state.serverMenuCursor--
+		_ = v.SetCursor(0, app.state.serverMenuCursor)
+	}
+	return nil
+}
+
+func (app *Gui) serverMenuDown(g *gocui.Gui, v *gocui.View) error {
+	if app.state.serverMenuCursor < len(app.state.serverMenuItems)-1 {
+		app.state.serverMenuCursor++
+		_ = v.SetCursor(0, app.state.serverMenuCursor)
+	}
+	return nil
+}
+
+func (app *Gui) serverMenuClose(g *gocui.Gui, v *gocui.View) error {
+	app.state.serverMenuVisible = false
+	v.Visible = false
+	_, _ = g.SetCurrentView(app.state.serverMenuPrevView)
+	return nil
+}
+
+func (app *Gui) serverMenuSelect(g *gocui.Gui, v *gocui.View) error {
+	idx := app.state.serverMenuCursor
+	if idx < 0 || idx >= len(app.state.serverMenuItems) {
+		return app.serverMenuClose(g, v)
+	}
+
+	selected := app.state.serverMenuItems[idx]
+
+	// Close the popup first.
+	app.state.serverMenuVisible = false
+	v.Visible = false
+	_, _ = g.SetCurrentView(app.state.serverMenuPrevView)
+
+	if selected == "Custom..." {
+		if app.state.connCursor == 0 {
+			return app.openConnectDialog(g, nil)
+		}
+		return app.openOASFDialog(g, nil)
+	}
+
+	if app.state.connCursor == 0 {
+		if idx < len(app.cfg.DirectoryServers) {
+			app.connectToDirectory(g, app.cfg.DirectoryServers[idx])
+		}
+	} else {
+		if idx < len(app.cfg.OASFServers) {
+			app.connectToOASF(g, app.cfg.OASFServers[idx])
+		}
+	}
+	return nil
+}
+
+func (app *Gui) connectToDirectory(g *gocui.Gui, entry config.DirectoryEntry) {
+	app.stopReconnectLoop()
+	if app.state.cancelLoad != nil {
+		app.state.cancelLoad()
+		app.state.cancelLoad = nil
+	}
+	app.state.activeDir = entry
+	app.state.serverAddr = entry.Address
+	app.state.dirStatus = connTrying
+	app.state.stream = streamLoading
+	app.state.records = nil
+	app.state.filteredRecords = nil
+	app.state.recordCursor = 0
+	app.renderDirectory(g)
+	app.renderRecordsView(g)
+
+	if entry.OIDCIssuer != "" {
+		go app.connectWithOIDC(entry)
+	} else {
+		authMode := app.state.authMode
+		if authMode == "" {
+			authMode = "insecure"
+		}
+		cfg := dirclient.Config{
+			ServerAddress: entry.Address,
+			AuthMode:      authMode,
+			TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
+			TLSCAFile:     app.cfg.Directory.TLSCAFile,
+			TLSCertFile:   app.cfg.Directory.TLSCertFile,
+			TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
+			AuthToken:     app.cfg.Directory.AuthToken,
+		}
+		go app.connect(cfg)
+	}
+}
+
+func (app *Gui) connectWithOIDC(entry config.DirectoryEntry) {
+	ctx := context.Background()
+
+	writer := &oidcDeviceWriter{gui: app.g, app: app}
+
+	token, err := dirclient.EnsureOIDCToken(ctx, entry.OIDCIssuer, entry.OIDCClientID, writer)
+
+	// Close the auth popup regardless of outcome.
+	app.g.Update(func(g *gocui.Gui) error {
+		app.closeAuthPopup(g)
+		return nil
+	})
+
+	if err != nil {
+		app.g.Update(func(g *gocui.Gui) error {
+			app.state.dirStatus = connFailed
+			app.state.dirError = err.Error()
+			app.state.stream = streamIdle
+			app.renderDirectory(g)
+			app.openInfoPopup(g, viewDirectory)
+			return nil
+		})
+		return
+	}
+
+	cfg := dirclient.Config{
+		ServerAddress: entry.Address,
+		AuthMode:      "oidc",
+		TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
+		TLSCAFile:     app.cfg.Directory.TLSCAFile,
+		TLSCertFile:   app.cfg.Directory.TLSCertFile,
+		TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
+		AuthToken:     token,
+		OIDCIssuer:    entry.OIDCIssuer,
+		OIDCClientID:  entry.OIDCClientID,
+	}
+	app.connect(cfg)
+}
+
+// oidcDeviceWriter intercepts device flow output, extracts the URL and code,
+// copies the code to clipboard, opens the browser, and shows an auth popup.
+type oidcDeviceWriter struct {
+	gui  *gocui.Gui
+	app  *Gui
+	buf  string
+	done bool
+}
+
+func (w *oidcDeviceWriter) Write(p []byte) (n int, err error) {
+	w.buf += string(p)
+
+	if w.done {
+		return len(p), nil
+	}
+
+	url, code := parseDeviceFlowOutput(w.buf)
+	if url == "" || code == "" {
+		return len(p), nil
+	}
+	w.done = true
+
+	_ = writeClipboard(code)
+	openBrowser(url)
+
+	w.gui.Update(func(g *gocui.Gui) error {
+		w.app.showAuthPopup(g, url, code)
+		return nil
+	})
+
+	return len(p), nil
+}
+
+// parseDeviceFlowOutput extracts verification URL and user code from the
+// upstream device flow output format:
+// "\nEnter this code at <URL>:\n\n  <CODE>\n\nWaiting for authorization...\n"
+func parseDeviceFlowOutput(s string) (url, code string) {
+	const prefix = "Enter this code at "
+	idx := strings.Index(s, prefix)
+	if idx < 0 {
+		return "", ""
+	}
+	rest := s[idx+len(prefix):]
+
+	// The URL ends with ":\n" — find that boundary (not just any colon).
+	colonNewline := strings.Index(rest, ":\n")
+	if colonNewline < 0 {
+		return "", ""
+	}
+	url = strings.TrimSpace(rest[:colonNewline])
+
+	rest = rest[colonNewline+2:]
+	waitIdx := strings.Index(rest, "Waiting for authorization")
+	if waitIdx < 0 {
+		return url, ""
+	}
+	code = strings.TrimSpace(rest[:waitIdx])
+	return url, code
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		cmd = exec.Command("xdg-open", url)
+	}
+	_ = cmd.Start()
+}
+
+func (app *Gui) showAuthPopup(g *gocui.Gui, url, code string) {
+	content := fmt.Sprintf(
+		" Authenticate in your browser:\n\n   %s\n\n Code: %s  (copied to clipboard)\n\n Waiting for authorization...",
+		url, code,
+	)
+
+	app.state.authPopupLines = strings.Count(content, "\n") + 1
+
+	v, err := g.View(viewAuthPopup)
+	if err != nil {
+		return
+	}
+	v.Clear()
+	v.Visible = true
+	fmt.Fprint(v, content)
+	_, _ = g.SetViewOnTop(viewAuthPopup)
+}
+
+func (app *Gui) closeAuthPopup(g *gocui.Gui) {
+	v, err := g.View(viewAuthPopup)
+	if err != nil {
+		return
+	}
+	v.Visible = false
+	v.Clear()
+}
+
+func (app *Gui) dismissAuthPopup(g *gocui.Gui, v *gocui.View) error {
+	app.closeAuthPopup(g)
+	_, _ = g.SetCurrentView(viewDirectory)
+	return nil
+}
+
+func (app *Gui) connectToOASF(g *gocui.Gui, addr string) {
+	app.stopOASFReconnectLoop()
+	client, err := oasf.NewClient(oasf.Config{ServerAddress: addr})
+	if err != nil {
+		app.state.oasfStatus = connFailed
+		app.state.oasfError = err.Error()
+		app.state.oasfAddr = addr
+		app.renderDirectory(g)
+		return
+	}
+	app.state.oasfClient = client
+	app.state.oasfAddr = addr
+	app.state.oasfStatus = connTrying
+	app.state.oasfError = ""
+	app.state.classEntries = nil
+	app.state.classEntriesVer = ""
+	app.renderDirectory(g)
+	go app.pingOASF(client)
+}
+
 func (app *Gui) openConnectDialog(g *gocui.Gui, v *gocui.View) error {
 	app.openInput("Connect to directory (enter addr)", app.state.serverAddr,
 		func(addr string) {
 			if addr == "" {
 				return
 			}
-			cfg := dirclient.Config{
-				ServerAddress: addr,
-				AuthMode:      app.state.authMode,
-				TLSSkipVerify: app.cfg.Directory.TLSSkipVerify,
-				TLSCAFile:     app.cfg.Directory.TLSCAFile,
-				TLSCertFile:   app.cfg.Directory.TLSCertFile,
-				TLSKeyFile:    app.cfg.Directory.TLSKeyFile,
-				AuthToken:     app.cfg.Directory.AuthToken,
-			}
-			go app.connect(cfg)
+			app.connectToDirectory(g, config.DirectoryEntry{Address: addr})
 		},
 		nil, nil,
 	)
@@ -677,20 +1070,7 @@ func (app *Gui) openOASFDialog(g *gocui.Gui, v *gocui.View) error {
 			if addr == "" {
 				return
 			}
-			client, err := oasf.NewClient(oasf.Config{ServerAddress: addr})
-			if err != nil {
-				app.g.Update(func(g *gocui.Gui) error {
-					app.renderPreviewText(g, "OASF configuration failed", err.Error())
-					return nil
-				})
-				return
-			}
-			app.g.Update(func(g *gocui.Gui) error {
-				app.state.oasfClient = client
-				app.state.oasfAddr = addr
-				app.renderDirectory(g)
-				return nil
-			})
+			app.connectToOASF(g, addr)
 		},
 		nil, nil,
 	)
@@ -914,28 +1294,25 @@ func (app *Gui) openInfoPopup(g *gocui.Gui, sourcePanel string) {
 	_ = ipv.SetOrigin(0, 0)
 	ipv.Visible = true
 	app.renderInfoPopup(g)
-	_, _ = g.SetCurrentView(viewInfoPopup)
 	_, _ = g.SetViewOnTop(viewInfoPopup)
 }
 
-// closeInfoPopup hides the info popup and returns focus.
+// closeInfoPopup hides the info popup and resets state.
 func (app *Gui) closeInfoPopup(g *gocui.Gui, v *gocui.View) error {
 	ipv, err := g.View(viewInfoPopup)
 	if err != nil {
 		return nil
 	}
 	ipv.Visible = false
+	ipv.FrameColor = gocui.ColorDefault
+	ipv.TitleColor = gocui.ColorDefault
 
 	app.clearRecordInlineDesc()
 	app.clearInlineDesc()
 
-	target := app.state.infoPrevView
-	if target == "" {
-		target = viewRecords
-	}
 	app.state.infoPrevView = ""
 	app.state.infoPopupPanel = ""
-	return app.focusTo(g, target)
+	return nil
 }
 
 // renderInfoPopup updates the content of the info popup based on whichever
@@ -948,7 +1325,13 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 	ipv.Clear()
 	_ = ipv.SetOrigin(0, 0)
 
+	hasError := false
+
 	switch app.state.infoPopupPanel {
+	case viewDirectory:
+		text, isErr := app.connInfoText()
+		fmt.Fprint(ipv, text)
+		hasError = isErr
 	case viewFilters:
 		if app.state.filters.inlineDescLoading {
 			fmt.Fprintf(ipv, "%sloading…%s", app.theme.Color4, app.theme.Reset)
@@ -961,6 +1344,14 @@ func (app *Gui) renderInfoPopup(g *gocui.Gui) {
 		} else if app.state.recordInfoText != "" {
 			fmt.Fprint(ipv, app.state.recordInfoText)
 		}
+	}
+
+	if hasError {
+		ipv.FrameColor = gocui.ColorRed
+		ipv.TitleColor = gocui.ColorRed
+	} else {
+		ipv.FrameColor = gocui.ColorGreen
+		ipv.TitleColor = gocui.ColorGreen
 	}
 }
 

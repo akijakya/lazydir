@@ -84,6 +84,16 @@ func (c *Client) ServerAddress() string {
 	return c.cfg.ServerAddress
 }
 
+// Ping verifies that the OASF schema server is reachable by issuing a
+// lightweight taxonomy fetch. The result is cached by the SDK, so
+// subsequent real fetches benefit from the warm cache.
+func (c *Client) Ping(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout())
+	defer cancel()
+	_, err := c.sdk.GetSchemaSkills(ctx)
+	return err
+}
+
 func (c *Client) timeout() time.Duration {
 	if c.cfg.Timeout > 0 {
 		return time.Duration(c.cfg.Timeout) * time.Second

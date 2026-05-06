@@ -8,22 +8,24 @@ import (
 )
 
 const (
-	viewDirectory = "directory"
-	viewFilters   = "filters"
-	viewRecords   = "records"
-	viewPreview   = "preview"
-	viewOptions   = "options"   // bottom bar: context keybindings (like lazygit)
-	viewInput     = "input"     // shared editable prompt view, shown on demand
-	viewHelp      = "help"      // ? popup overlay, shown on demand
-	viewCopyMenu  = "copymenu"  // copy-options popup, shown on demand
-	viewInfoPopup = "infopopup" // info popup, shown on demand (i key)
+	viewDirectory  = "directory"
+	viewFilters    = "filters"
+	viewRecords    = "records"
+	viewPreview    = "preview"
+	viewOptions    = "options"    // bottom bar: context keybindings (like lazygit)
+	viewInput      = "input"      // shared editable prompt view, shown on demand
+	viewHelp       = "help"       // ? popup overlay, shown on demand
+	viewCopyMenu   = "copymenu"   // copy-options popup, shown on demand
+	viewInfoPopup  = "infopopup"  // info popup, shown on demand (i key)
+	viewServerMenu = "servermenu" // server selection popup, shown on demand (c key)
+	viewAuthPopup  = "authpopup"  // OIDC auth popup, shown during device flow
 )
 
 // roundedFrame is a 6-rune set that gives every panel rounded corners: ╭─╮╰─╯
 var roundedFrame = []rune{'─', '│', '╭', '╮', '╰', '╯'}
 
 // listViews are the panels that show a highlighted cursor row.
-var listViews = []string{viewFilters, viewRecords}
+var listViews = []string{viewDirectory, viewFilters, viewRecords}
 
 // layout is the gocui Manager — called on every redraw/resize.
 func (g *Gui) layout(gui *gocui.Gui) error {
@@ -49,12 +51,9 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 
 	optionsX1 := maxX - 1
 
-	// [1] Connections shows two lines (Directory, OASF) plus an optional
-	// auth-mode line. Height = frame(2) + content lines.
+	// [1] Connections shows two lines (Directory, OASF).
+	// Height = frame(2) + 2 content lines.
 	dirH := 4
-	if g.state.authMode != "" {
-		dirH = 5
-	}
 
 	// The input prompt, when visible, steals a 3-row slot on the left column
 	// above the panel that requested it (the "host"). Panels below the host
@@ -135,6 +134,8 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Frame = true
 		v.Wrap = false
 		v.Highlight = false
+		v.SelBgColor = g.theme.SelectedRowBg
+		v.SelFgColor = gocui.ColorDefault
 		v.FrameRunes = roundedFrame
 		g.renderDirectory(gui)
 	}
@@ -256,18 +257,104 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 		v.Visible = false
 	}
 
+	// Server selection popup — centered over the connections panel.
+	{
+		smW := 40
+		if leftW-4 > smW {
+			smW = leftW - 4
+		}
+		smH := 6
+		if g.state.serverMenuVisible {
+			smH = len(g.state.serverMenuItems) + 2
+		}
+		smX0 := (leftW - smW) / 2
+		smY0 := dirY0 + 1
+		smX1 := smX0 + smW
+		smY1 := smY0 + smH
+		if smY1 > panelBottom {
+			smY1 = panelBottom
+		}
+		if v, err := gui.SetView(viewServerMenu, smX0, smY0, smX1, smY1, 0); err != nil {
+			if !gocui.IsUnknownView(err) {
+				return err
+			}
+			v.Title = " Select server "
+			v.Frame = true
+			v.FrameRunes = roundedFrame
+			v.Wrap = false
+			v.Visible = false
+			v.Highlight = true
+			v.SelBgColor = g.theme.SelectedRowBg
+			v.SelFgColor = gocui.ColorDefault
+		} else {
+			_, _ = gui.SetView(viewServerMenu, smX0, smY0, smX1, smY1, 0)
+			v.Visible = g.state.serverMenuVisible
+			if g.state.serverMenuVisible {
+				v.Clear()
+				for _, item := range g.state.serverMenuItems {
+					fmt.Fprintln(v, " "+item)
+				}
+				_ = v.SetCursor(0, g.state.serverMenuCursor)
+			}
+		}
+	}
+
+	// OIDC auth popup — centered on screen.
+	{
+		authW := 50
+		if leftW-4 < authW {
+			authW = leftW - 4
+		}
+		authH := g.state.authPopupLines + 2
+		if authH < 3 {
+			authH = 3
+		}
+		authX0 := 2
+		authY0 := dirY1 + 1
+		if authY0+authH-1 > panelBottom {
+			authY0 = panelBottom - authH + 1
+		}
+		if authY0 < 0 {
+			authY0 = 0
+		}
+		authX1 := authX0 + authW
+		if authX1 > leftW-1 {
+			authX1 = leftW - 1
+		}
+		authY1 := authY0 + authH - 1
+		if authY1 > panelBottom {
+			authY1 = panelBottom
+		}
+		if v, err := gui.SetView(viewAuthPopup, authX0, authY0, authX1, authY1, 0); err != nil {
+			if !gocui.IsUnknownView(err) {
+				return err
+			}
+			v.Title = " OIDC Login "
+			v.Frame = true
+			v.FrameRunes = roundedFrame
+			v.Wrap = true
+			v.Visible = false
+		} else {
+			_, _ = gui.SetView(viewAuthPopup, authX0, authY0, authX1, authY1, 0)
+		}
+	}
+
 	// Info popup — positioned under the selected item in the source panel,
 	// sized dynamically to fit the content.
 	infoW := leftW - 4
 	if infoW < 30 {
 		infoW = 30
 	}
-	infoH := g.infoPopupHeight(panelBottom)
+	infoH := g.infoPopupHeight(panelBottom, infoW-2)
 	ipX0, ipY0, ipX1, ipY1 := 0, -(infoH + 1), infoW, -1
 	if ipv, _ := gui.View(viewInfoPopup); ipv != nil && ipv.Visible {
 		sourceView := viewRecords
 		sourceY0 := recordY0
-		if g.state.infoPopupPanel == viewFilters {
+		switch g.state.infoPopupPanel {
+		case viewDirectory:
+			sourceView = viewDirectory
+			sourceY0 = dirY0
+		case viewFilters:
 			sourceView = viewFilters
 			sourceY0 = filtersY0
 		}
@@ -307,10 +394,10 @@ func (g *Gui) layout(gui *gocui.Gui) error {
 	if gui.CurrentView() == nil {
 		g.renderStatus(gui)
 		g.renderDirectory(gui)
-		if _, err := gui.SetCurrentView(viewRecords); err != nil {
+		if _, err := gui.SetCurrentView(viewDirectory); err != nil {
 			return err
 		}
-		g.syncHighlight(gui, viewRecords)
+		g.syncHighlight(gui, viewDirectory)
 	}
 
 	return nil
@@ -357,6 +444,26 @@ func (g *Gui) inputHostView() string {
 // renderDirectory refreshes the [1] Connections panel with both the Directory
 // and OASF endpoints the app is currently talking to. A sync indicator is
 // appended to the Directory line while the records stream is in flight.
+// connIcon returns the colored status indicator for a connection.
+func (g *Gui) connIcon(status connStatus) string {
+	switch status {
+	case connOK:
+		return g.theme.Color4 + "●" + g.theme.Reset
+	case connFailed:
+		return g.theme.Color6 + "●" + g.theme.Reset
+	default:
+		return g.theme.Color6 + "○" + g.theme.Reset
+	}
+}
+
+// connSync returns " ↻" when the connection is in the trying state.
+func connSync(status connStatus) string {
+	if status == connTrying {
+		return " ↻"
+	}
+	return ""
+}
+
 func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	v, err := gui.View(viewDirectory)
 	if err != nil {
@@ -364,68 +471,77 @@ func (g *Gui) renderDirectory(gui *gocui.Gui) {
 	}
 	v.Clear()
 
-	dirIcon := g.theme.Color6 + "○" + g.theme.Reset
-	if g.state.connected {
-		dirIcon = g.theme.Color4 + "●" + g.theme.Reset
-	}
-
-	sync := ""
-	switch g.state.stream {
-	case streamLoading, streamStreaming:
-		sync = " ↻"
-	}
-
-	fmt.Fprintf(v, " %s Directory: %s%s\n", dirIcon, g.state.serverAddr, sync)
-	if g.state.authMode != "" {
-		fmt.Fprintf(v, "   auth: %s\n", g.state.authMode)
-	}
+	dirSync := connSync(g.state.dirStatus)
+	fmt.Fprintf(v, " %s Directory: %s%s\n", g.connIcon(g.state.dirStatus), g.state.serverAddr, dirSync)
 
 	oasfAddr := g.state.oasfAddr
 	if oasfAddr == "" {
 		oasfAddr = "(not configured)"
 	}
-	fmt.Fprintf(v, " %s●%s OASF:      %s\n", g.theme.Color4, g.theme.Reset, oasfAddr)
+	fmt.Fprintf(v, " %s OASF:      %s%s", g.connIcon(g.state.oasfStatus), oasfAddr, connSync(g.state.oasfStatus))
+
+	_ = v.SetCursor(0, g.state.connCursor)
 }
 
 // infoPopupHeight computes the popup frame height based on the current info
-// content. Returns frame(2) + content lines, clamped between 4 and the
-// available vertical space. The records panel uses a more generous max
-// (3/4 of the screen) so annotation-heavy records can display fully.
-func (g *Gui) infoPopupHeight(panelBottom int) int {
-	const minH = 4
-
+// content. Returns frame(2) + content lines, clamped to the available space.
+func (g *Gui) infoPopupHeight(panelBottom, innerWidth int) int {
 	maxH := panelBottom / 2
 	if g.state.infoPopupPanel == viewRecords {
 		maxH = panelBottom * 3 / 4
 	}
-	if maxH < minH {
-		maxH = minH
+	if maxH < 3 {
+		maxH = 3
 	}
 
-	var text string
-	var loading bool
-	switch g.state.infoPopupPanel {
-	case viewFilters:
-		text = g.state.filters.inlineDescText
-		loading = g.state.filters.inlineDescLoading
-	case viewRecords:
-		text = g.state.recordInfoText
-		loading = g.state.recordInfoLoading
-	}
-
-	contentLines := 1
-	if loading {
-		contentLines = 1
-	} else if text != "" {
-		contentLines = strings.Count(text, "\n") + 1
-	}
+	contentLines := g.infoPopupContentLines(innerWidth)
 
 	h := contentLines + 2 // +2 for the frame top/bottom
-	if h < minH {
-		h = minH
-	}
 	if h > maxH {
 		h = maxH
 	}
 	return h
+}
+
+// infoPopupContentLines returns how many visual lines the info popup content
+// will use, accounting for word-wrap at the given inner width.
+func (g *Gui) infoPopupContentLines(wrapWidth int) int {
+	if wrapWidth < 10 {
+		wrapWidth = 10
+	}
+
+	var text string
+	switch g.state.infoPopupPanel {
+	case viewDirectory:
+		text, _ = g.connInfoText()
+	case viewFilters:
+		if g.state.filters.inlineDescLoading {
+			return 1
+		}
+		text = g.state.filters.inlineDescText
+	case viewRecords:
+		if g.state.recordInfoLoading {
+			return 1
+		}
+		text = g.state.recordInfoText
+	}
+
+	if text == "" {
+		return 1
+	}
+	return wrappedLineCount(text, wrapWidth)
+}
+
+// wrappedLineCount counts visual lines a string occupies at a given width,
+// adding 1 line of margin so gocui never shows a scrollbar.
+func wrappedLineCount(text string, width int) int {
+	total := 0
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		if len(line) == 0 {
+			total++
+			continue
+		}
+		total += (len(line)-1)/width + 1
+	}
+	return total + 1
 }
