@@ -1,5 +1,7 @@
 # lazydir
 
+> **This repository has been archived.** Development has moved to [agntcy/lazydir](https://github.com/agntcy/lazydir). Please open issues and pull requests there.
+
 A terminal user interface (TUI) for browsing and managing records in [AGNTCY Directory](https://github.com/agntcy/dir) instances — inspired by [lazygit](https://github.com/jesseduffield/lazygit) and [lazydocker](https://github.com/jesseduffield/lazydocker).
 
 ## Overview
